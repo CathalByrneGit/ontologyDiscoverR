@@ -1,0 +1,88 @@
+---
+title: "From Database Schema to Ontology Bundle in 5 Minutes"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{From Database Schema to Ontology Bundle in 5 Minutes}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  eval     = FALSE
+)
+```
+
+## Overview
+
+This vignette demonstrates how to extract an ontology bundle from a SQL DDL
+file in a few lines of R code.
+
+## Prerequisites
+
+```{r setup}
+library(ontologyDiscoverR)
+
+# Ensure your API key is set
+Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")  # or use .Renviron
+```
+
+## Step 1: Create a session and add your schema
+
+```{r session}
+sess <- discover_session("hospital-demo")
+sess <- dis_add_file(sess, "path/to/hospital-schema.sql")
+```
+
+You can also point at a live database:
+
+```{r db}
+library(DBI)
+library(duckdb)
+
+con  <- dbConnect(duckdb::duckdb(), "hospital.ddb")
+sess <- dis_add_db(sess, con, label = "hospital-db")
+```
+
+## Step 2: Run extraction
+
+```{r extract}
+sess <- dis_extract(sess, verbose = TRUE)
+```
+
+This runs three LLM passes per source:
+1. **Pass 1**: Extract object types and their properties
+2. **Pass 2**: Extract link types (relationships between objects)
+3. **Pass 3**: Extract action types and concept hints
+
+After extraction, candidates are deduplicated and merged across sources.
+
+## Step 3: Review (optional)
+
+```{r review, eval=FALSE}
+sess <- dis_review(sess)
+```
+
+The Shiny review app lets you approve or reject each candidate, edit properties,
+and resolve conflicts before building the bundle.
+
+## Step 4: Export to bundle
+
+```{r bundle}
+bundle <- dis_to_bundle(
+  sess,
+  bundle_id   = "hospital-v1",
+  bundle_name = "Hospital Management Ontology"
+)
+
+# The bundle is a plain list — write it to JSON for use with ontologySpecR
+jsonlite::write_json(bundle, "hospital-bundle.json", auto_unbox = TRUE, pretty = TRUE)
+```
+
+## Quick summary
+
+```{r summary}
+dis_summary(sess)
+```

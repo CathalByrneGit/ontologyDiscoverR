@@ -1,0 +1,11 @@
+patient_id,first_name,last_name,date_of_birth,gender,ward,length_of_stay,diagnosis_complete
+1,John,Smith,1955-03-12,M,ICU,5,TRUE
+2,Mary,Johnson,1978-07-24,F,General,2,FALSE
+3,Robert,Williams,1942-11-08,M,Surgical,7,TRUE
+4,Patricia,Brown,1990-02-15,F,General,1,FALSE
+5,Michael,Davis,1961-09-30,M,ICU,4,TRUE
+6,Linda,Miller,1983-04-18,F,General,3,TRUE
+7,William,Wilson,1935-12-01,M,Surgical,10,TRUE
+8,Barbara,Moore,1969-08-22,F,General,2,FALSE
+9,Richard,Taylor,1948-05-14,M,ICU,6,TRUE
+10,Susan,Anderson,1995-01-29,F,General,1,FALSE

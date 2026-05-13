@@ -1,0 +1,64 @@
+---
+title: "Extracting an Ontology from PDF Documentation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Extracting an Ontology from PDF Documentation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+## When you only have documents
+
+Sometimes you don't have a database schema — only PDF manuals, Word documents
+converted to PDF, or markdown specifications. `ontologyDiscoverR` handles this
+via the `parse_pdf()` and `parse_markdown()` parsers.
+
+```{r setup}
+library(ontologyDiscoverR)
+Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
+```
+
+## Adding PDF and Markdown sources
+
+```{r sources}
+sess <- discover_session("docs-demo")
+
+# Add a PDF manual
+sess <- dis_add_file(sess, "hospital-manual.pdf")
+
+# Add a Markdown API specification
+sess <- dis_add_file(sess, "api-spec.md")
+
+# Mix with a schema if available
+sess <- dis_add_file(sess, "schema.sql")
+```
+
+## Extraction and review
+
+```{r extract}
+sess <- dis_extract(sess, verbose = TRUE)
+dis_summary(sess)
+```
+
+Because documentation sources are less structured than schemas, confidence
+scores will typically be lower (0.5–0.8). Use `dis_review()` to validate the
+results before building the bundle.
+
+```{r review}
+sess   <- dis_review(sess)
+bundle <- dis_to_bundle(sess, "docs-bundle", "Documentation Ontology",
+                         min_confidence = 0.6)
+```
+
+## Tips for better extraction from documents
+
+- Include a **glossary** or **data dictionary** section if one exists — these
+  give the LLM high-confidence anchors.
+- For large PDFs (> 50 pages), split by chapter and run separate sessions,
+  then merge candidates manually.
+- Use `include_concepts = TRUE` in `dis_to_bundle()` if the documentation
+  describes business rules you want to capture as concept definitions.

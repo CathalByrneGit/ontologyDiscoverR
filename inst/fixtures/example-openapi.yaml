@@ -1,0 +1,269 @@
+openapi: "3.0.0"
+info:
+  title: "Hospital Management API"
+  version: "1.0.0"
+  description: "API for managing hospital patients, doctors, and appointments."
+
+paths:
+  /patients:
+    get:
+      summary: "List all patients"
+      operationId: "listPatients"
+      tags:
+        - patients
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: "A list of patients"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Patient"
+    post:
+      summary: "Register a new patient"
+      operationId: "createPatient"
+      tags:
+        - patients
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Patient"
+      responses:
+        "201":
+          description: "Patient created"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "400":
+          description: "Invalid input"
+
+  /patients/{id}:
+    get:
+      summary: "Get a patient by ID"
+      operationId: "getPatient"
+      tags:
+        - patients
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: "Patient found"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "404":
+          description: "Patient not found"
+    put:
+      summary: "Update a patient record"
+      operationId: "updatePatient"
+      tags:
+        - patients
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Patient"
+      responses:
+        "200":
+          description: "Patient updated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "404":
+          description: "Patient not found"
+
+  /appointments:
+    get:
+      summary: "List all appointments"
+      operationId: "listAppointments"
+      tags:
+        - appointments
+      parameters:
+        - name: patientId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: doctorId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: "A list of appointments"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Appointment"
+    post:
+      summary: "Schedule a new appointment"
+      operationId: "createAppointment"
+      tags:
+        - appointments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Appointment"
+      responses:
+        "201":
+          description: "Appointment scheduled"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "400":
+          description: "Invalid input"
+
+  /appointments/{id}/cancel:
+    post:
+      summary: "Cancel an appointment"
+      operationId: "cancelAppointment"
+      tags:
+        - appointments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: "Reason for cancellation"
+      responses:
+        "200":
+          description: "Appointment cancelled"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "404":
+          description: "Appointment not found"
+        "409":
+          description: "Appointment already cancelled or completed"
+
+components:
+  schemas:
+    Patient:
+      type: object
+      required:
+        - firstName
+        - lastName
+        - dateOfBirth
+      properties:
+        id:
+          type: integer
+          readOnly: true
+          description: "Unique patient identifier"
+        firstName:
+          type: string
+          maxLength: 100
+          description: "Patient first name"
+        lastName:
+          type: string
+          maxLength: 100
+          description: "Patient last name"
+        dateOfBirth:
+          type: string
+          format: date
+          description: "Patient date of birth (YYYY-MM-DD)"
+        email:
+          type: string
+          format: email
+          maxLength: 200
+          description: "Patient email address"
+
+    Doctor:
+      type: object
+      required:
+        - firstName
+        - lastName
+      properties:
+        id:
+          type: integer
+          readOnly: true
+          description: "Unique doctor identifier"
+        firstName:
+          type: string
+          maxLength: 100
+          description: "Doctor first name"
+        lastName:
+          type: string
+          maxLength: 100
+          description: "Doctor last name"
+        specialisation:
+          type: string
+          maxLength: 100
+          description: "Medical specialisation of the doctor"
+
+    Appointment:
+      type: object
+      required:
+        - patientId
+        - doctorId
+        - scheduledAt
+      properties:
+        id:
+          type: integer
+          readOnly: true
+          description: "Unique appointment identifier"
+        patientId:
+          type: integer
+          description: "ID of the patient"
+        doctorId:
+          type: integer
+          description: "ID of the doctor"
+        scheduledAt:
+          type: string
+          format: date-time
+          description: "Date and time of the appointment"
+        status:
+          type: string
+          enum:
+            - scheduled
+            - completed
+            - cancelled
+            - no_show
+          default: scheduled
+          description: "Current status of the appointment"
