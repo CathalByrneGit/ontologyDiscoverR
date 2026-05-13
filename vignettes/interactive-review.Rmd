@@ -1,0 +1,86 @@
+---
+title: "Interactive Review with dis_review()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Interactive Review with dis_review()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+## The review workflow
+
+After `dis_extract()` produces candidate ontology elements, human review
+ensures quality before the bundle is built. The `dis_review()` Shiny app
+provides a structured interface for this.
+
+```{r setup}
+library(ontologyDiscoverR)
+```
+
+## Launching the reviewer
+
+```{r review}
+# Assumes sess has been populated via dis_extract()
+sess <- dis_review(sess)
+```
+
+The app opens in your browser with four panels:
+
+### Panel 1: Object Types
+
+Each row shows a candidate object type with its confidence score and source
+count. Click a row to see:
+- All properties with their types and nullability
+- Source excerpts that led to this candidate
+- Any conflicts with other candidates
+
+Bulk actions:
+- **Approve all ≥ 0.8**: Approves high-confidence candidates in one click
+- **Reject all < 0.3**: Clears out speculative entries
+
+### Panel 2: Link Types
+
+Shows `from → to` relationships. The confidence-based colouring helps you
+quickly spot uncertain links. Click a row to correct the from/to endpoints
+if the LLM misidentified them.
+
+### Panel 3: Concept Hints
+
+Each hint shows the LLM's suggested SQL expression. You can edit the SQL
+inline and click **Test** (if a database connection is active) to see the
+TRUE/FALSE distribution. Approve hints to include them as `concept_defs` in
+the bundle.
+
+### Panel 4: Conflicts
+
+Pairs of conflicting candidates appear side by side. For each pair, choose:
+- **Keep A** — discard B
+- **Keep B** — discard A
+- **Keep Both** — retain both as separate candidates
+
+## Closing the app
+
+Click the **Done** button in the navbar. The app closes and `dis_review()`
+returns the updated session with all your status changes applied.
+
+```{r bundle}
+bundle <- dis_to_bundle(sess, "reviewed-bundle", "Reviewed Ontology")
+```
+
+## Programmatic approval
+
+If you want to auto-approve without opening the UI:
+
+```{r programmatic}
+sess$candidates$object_types <- lapply(
+  sess$candidates$object_types,
+  function(ot) {
+    if (ot$confidence >= 0.8) ot$status <- "approved"
+    ot
+  }
+)
+```

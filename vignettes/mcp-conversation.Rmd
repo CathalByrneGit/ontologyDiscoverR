@@ -1,0 +1,76 @@
+---
+title: "Building an Ontology via LLM Conversation (MCP)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Building an Ontology via LLM Conversation (MCP)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+## Iterative ontology construction via conversation
+
+When `ontologyMCP` is installed, you can expose the session as an MCP tool
+and build the ontology interactively through a conversation with Claude.
+
+```{r setup}
+library(ontologyDiscoverR)
+# install.packages("ontologyMCP")  # optional companion package
+library(ontologyMCP)
+Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
+```
+
+## Setting up the MCP server
+
+```{r mcp}
+sess   <- discover_session("mcp-demo")
+server <- ontologyMCP::mcp_server("ontology-builder")
+server <- dis_add_mcp_tool(server, sess)
+ontologyMCP::mcp_start(server)
+```
+
+## Example conversation flow
+
+Once the server is running, an LLM agent can interact with it:
+
+```
+User: "Look at this database schema and build me an ontology for a hospital"
+Claude: [parses schema, calls dis_extract, lists discovered types]
+
+User: "The Patient table also connects to the Ward table via ward_assignments"
+Claude: [calls build_ontology("Add a link from Patient to Ward called ward_assignments, many_to_many")]
+→ Done: Added link type 'ward_assignments'
+
+User: "Add a concept for high-risk patients: age > 65 OR previous_admissions > 0"
+Claude: [calls build_ontology("Add concept high_risk_patient for Patient where age > 65 OR previous_admissions > 0")]
+→ Done: Added concept hint 'high_risk_patient'
+
+User: "Looks good — approve everything and generate the bundle"
+Claude: [calls build_ontology("Approve all pending object types"), then dis_to_bundle()]
+```
+
+## Supported natural language instructions
+
+The `build_ontology` tool understands:
+
+| Instruction pattern | Effect |
+|---|---|
+| `"Add an object type for X with properties a, b, c"` | Adds a CandidateObjectType |
+| `"Add a link from X to Y called Z"` | Adds a CandidateLinkType |
+| `"Add a concept called X for Y where <SQL condition>"` | Adds a CandidateConceptHint |
+| `"Add an action called X on Y"` | Adds a CandidateActionType |
+| `"Approve all pending object types"` | Sets status = approved |
+| `"Reject the concept high_risk"` | Sets status = rejected for that id |
+
+## Retrieving the final session
+
+After the conversation, retrieve the updated session and build the bundle:
+
+```{r final}
+final_sess <- ontologyMCP::mcp_get_session(server, "ontology-builder")
+bundle     <- dis_to_bundle(final_sess, "mcp-bundle", "MCP-built Ontology",
+                             include_concepts = TRUE)
+```
