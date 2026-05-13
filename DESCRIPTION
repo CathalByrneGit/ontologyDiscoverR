@@ -1,0 +1,37 @@
+Package: ontologyDiscoverR
+Title: AI-Assisted Ontology Discovery from Documents and Schemas
+Version: 0.1.0
+Authors@R: person("ontologyDiscoverR", "Authors", role = c("aut", "cre"),
+    email = "authors@example.com")
+Description: Uses large language models to extract ontology structure (object types,
+    properties, link types, actions, concepts) from database schemas, API specs,
+    documentation, and data files. Produces an ontologySpecR bundle for use with
+    objectSetsR, conceptR, and the rest of the ontology stack.
+Depends: R (>= 4.1)
+Imports:
+    httr2,
+    jsonlite,
+    rlang,
+    cli,
+    purrr,
+    dplyr
+Suggests:
+    DBI,
+    duckdb,
+    shiny,
+    bslib,
+    DT,
+    reactable,
+    pdftools,
+    xml2,
+    yaml,
+    mockery,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+VignetteBuilder: knitr
+Config/testthat/edition: 3
