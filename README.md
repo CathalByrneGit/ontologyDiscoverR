@@ -1,0 +1,190 @@
+<!-- README.md is generated from README.Rmd. Please edit that file. -->
+
+# ontologyDiscoverR
+
+**AI-assisted ontology discovery from documents and schemas.**
+
+`ontologyDiscoverR` uses the Anthropic Claude API to automatically extract
+ontology structure — object types, properties, link types, action types, and
+concept definitions — from database schemas, API specs, documentation, and
+data files. The output is a validated bundle ready for use with `ontologySpecR`,
+`objectSetsR`, and `conceptR`.
+
+## Installation
+
+``` r
+# install.packages("pak")
+pak::pkg_install("cathalbyrnegit/ontologydiscoverr")
+```
+
+Set your Anthropic API key before use:
+
+``` r
+Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
+# Or add ANTHROPIC_API_KEY=your-key-here to your ~/.Renviron
+```
+
+## How it works
+
+```
+Source documents / schemas / APIs
+          ↓
+     ontologyDiscoverR
+       ├── parse      (extract text/structure per source type)
+       ├── extract    (LLM → candidate types, properties, links)
+       ├── merge      (deduplicate, resolve conflicts)
+       ├── review     (human approval Shiny app)
+       └── emit       (ontologySpecR bundle)
+          ↓
+     ontologySpecR bundle → rest of stack
+```
+
+The LLM runs **three sequential passes** per source:
+
+1. **Object types** — entities with identity (tables, schema components, named domain concepts)
+2. **Link types** — relationships between object types (FK constraints, API references, document links)
+3. **Action types & concept hints** — verbs/endpoints and business-rule conditions
+
+## Quick start
+
+``` r
+library(ontologyDiscoverR)
+
+# 1. Create a session and add sources
+sess <- discover_session("hospital-demo")
+sess <- dis_add_file(sess, "path/to/hospital-schema.sql")
+sess <- dis_add_file(sess, "path/to/api-spec.yaml")
+sess <- dis_add_file(sess, "path/to/domain-docs.pdf")
+
+# 2. Run extraction (calls Claude API)
+sess <- dis_extract(sess, verbose = TRUE)
+#> ℹ Processing source 1/3: hospital-schema.sql
+#> ℹ Processing source 2/3: api-spec.yaml
+#> ℹ Processing source 3/3: domain-docs.pdf
+#> ℹ Merging and deduplicating candidates...
+#> ℹ Sources processed: 3
+#> ℹ Object types found: 12 (8 high-confidence, 4 medium, 0 low)
+#> ℹ Link types found: 7
+#> ℹ Action types found: 4
+#> ℹ Concept hints found: 6
+#> ℹ Conflicts requiring review: 2
+
+# 3. Review candidates interactively (optional)
+sess <- dis_review(sess)
+
+# 4. Export to an ontologySpecR bundle
+bundle <- dis_to_bundle(
+  sess,
+  bundle_id   = "hospital-v1",
+  bundle_name = "Hospital Management Ontology"
+)
+```
+
+## Supported source types
+
+| Source type | Function | Notes |
+|---|---|---|
+| SQL DDL file | `parse_sql_ddl()` | CREATE TABLE → object types, FK → link types |
+| Live database | `parse_db_schema()` | DBI connection, reads information\_schema |
+| OpenAPI spec | `parse_openapi()` | 3.x + Swagger 2.x, YAML or JSON |
+| CSV file | `parse_csv()` | Header + sample rows, type inference |
+| R data frame | `parse_r_dataframe()` | In-memory, includes `str()` for LLM context |
+| PDF | `parse_pdf()` | Text extracted via `pdftools`, up to 50k chars |
+| Markdown / HTML | `parse_markdown()` / `parse_html()` | Heading structure preserved |
+| OWL / RDF | `parse_owl()` | Classes → object types, properties → links |
+
+## Live database example
+
+``` r
+library(DBI)
+library(duckdb)
+
+con  <- dbConnect(duckdb::duckdb(), "hospital.ddb")
+sess <- discover_session("from-db")
+sess <- dis_add_db(sess, con, label = "hospital-db")
+sess <- dis_extract(sess)
+```
+
+## Confidence scores
+
+Every extracted candidate carries a confidence score (0–1):
+
+| Score | Meaning |
+|---|---|
+| 1.0 | Explicitly defined in schema / data dictionary |
+| 0.9 | Clearly named in documentation with attributes listed |
+| 0.7 | Mentioned as a concept with some structure implied |
+| 0.5 | Inferred from context |
+| 0.2 | Speculative |
+
+Use `min_confidence` in `dis_to_bundle()` to control which pending candidates
+are included:
+
+``` r
+bundle <- dis_to_bundle(sess, "my-bundle", "My Ontology", min_confidence = 0.7)
+```
+
+## Interactive review
+
+``` r
+sess <- dis_review(sess)
+```
+
+The Shiny app has four panels:
+
+- **Object Types** — approve/reject individual candidates or bulk-approve all ≥ 0.8 confidence
+- **Link Types** — correct from/to endpoints if the LLM misidentified them
+- **Concept Hints** — edit the suggested SQL expression inline, test against a live DB
+- **Conflicts** — resolve pairs of conflicting candidates side by side
+
+## MCP conversational building
+
+If `ontologyMCP` is installed, you can build the ontology interactively:
+
+``` r
+library(ontologyMCP)
+
+server <- mcp_server("ontology-builder")
+server <- dis_add_mcp_tool(server, sess)
+mcp_start(server)
+
+# Now an LLM agent can say things like:
+# "Add a link from Hospital to Patient called Admission"
+# "The Patient object type should have a concept called high_risk where age > 65"
+# "Looks good — generate the bundle"
+```
+
+## Testing
+
+All tests mock `call_claude()` — no API key required, no cost:
+
+``` r
+# install.packages("mockery")
+devtools::test()
+```
+
+## Package structure
+
+```
+R/
+  session.R           # discover_session, dis_add_*, dis_extract, dis_summary, dis_to_bundle
+  llm.R               # call_claude (Anthropic API via httr2)
+  parsers/            # one file per source type
+  extract.R           # four LLM extraction passes
+  merge.R             # merge_candidates, detect_conflicts
+  candidates.R        # S3 constructors for all four candidate types
+  review.R            # dis_review() Shiny app
+  mcp_builder.R       # dis_add_mcp_tool() (optional)
+  types.R             # normalise_type, validate_candidate
+  utils.R             # UUID, truncation, JSON helpers
+
+inst/fixtures/        # example-schema.sql, example-openapi.yaml,
+                      # example-docs.md, example-data.csv
+
+tests/testthat/       # mocked-LLM tests for all modules
+vignettes/            # four how-to vignettes
+```
+
+## License
+
+MIT
