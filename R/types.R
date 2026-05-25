@@ -1,4 +1,4 @@
-#' Normalise a raw type string to an ontologySpecR property type
+#' Normalise a raw type string to a canonical property type
 #'
 #' @param raw_type Character string of the raw type (e.g. "varchar(255)", "TEXT", "int")
 #' @return One of: "string", "integer", "number", "boolean", "date", "datetime", "object", "array"

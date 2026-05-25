@@ -7,8 +7,8 @@
 `ontologyDiscoverR` uses the Anthropic Claude API to automatically extract
 ontology structure — object types, properties, link types, action types, and
 concept definitions — from database schemas, API specs, documentation, and
-data files. The output is a validated bundle ready for use with `ontologySpecR`,
-`objectSetsR`, and `conceptR`.
+data files. The output is a structured bundle (a plain R list) that works
+standalone or can feed into downstream ontology tooling.
 
 ## Installation
 
@@ -34,9 +34,9 @@ Source documents / schemas / APIs
        ├── extract    (LLM → candidate types, properties, links)
        ├── merge      (deduplicate, resolve conflicts)
        ├── review     (human approval Shiny app)
-       └── emit       (ontologySpecR bundle)
+       └── emit       (ontology bundle — plain R list)
           ↓
-     ontologySpecR bundle → rest of stack
+     bundle (JSON/R list) → your tooling or downstream packages
 ```
 
 The LLM runs **three sequential passes** per source:
@@ -72,7 +72,7 @@ sess <- dis_extract(sess, verbose = TRUE)
 # 3. Review candidates interactively (optional)
 sess <- dis_review(sess)
 
-# 4. Export to an ontologySpecR bundle
+# 4. Export to a bundle (plain R list)
 bundle <- dis_to_bundle(
   sess,
   bundle_id   = "hospital-v1",

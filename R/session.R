@@ -235,7 +235,7 @@ dis_summary <- function(session) {
   invisible(session)
 }
 
-#' Export approved candidates as an ontologySpecR-style bundle
+#' Export approved candidates as an ontology bundle
 #'
 #' @param session A DiscoverySession object
 #' @param bundle_id Character id for the bundle

@@ -5,8 +5,8 @@ Authors@R: person("ontologyDiscoverR", "Authors", role = c("aut", "cre"),
     email = "authors@example.com")
 Description: Uses large language models to extract ontology structure (object types,
     properties, link types, actions, concepts) from database schemas, API specs,
-    documentation, and data files. Produces an ontologySpecR bundle for use with
-    objectSetsR, conceptR, and the rest of the ontology stack.
+    documentation, and data files. Produces a structured bundle as a plain R list
+    that can be used standalone or passed to downstream ontology packages.
 Depends: R (>= 4.1)
 Imports:
     httr2,
