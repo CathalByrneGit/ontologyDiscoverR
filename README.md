@@ -26,58 +26,84 @@ Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
 
 ## How it works
 
+The package has two phases, each powered by a pluggable LLM provider (Anthropic,
+OpenAI, Ollama/local, or any ellmer-compatible backend):
+
 ```
-Source documents / schemas / APIs
-          ↓
-     ontologyDiscoverR
-       ├── parse      (extract text/structure per source type)
-       ├── extract    (LLM → candidate types, properties, links)
-       ├── merge      (deduplicate, resolve conflicts)
-       ├── review     (human approval Shiny app)
-       └── emit       (ontology bundle — plain R list)
-          ↓
-     bundle (JSON/R list) → your tooling or downstream packages
+Phase 1 — Schema discovery
+  Source documents / schemas / APIs
+            ↓  parse → extract → merge → review
+       ontology bundle (plain R list)
+
+Phase 2 — Population
+       ontology bundle  +  document corpus
+            ↓  extract instances → validate against schema
+       named data frames  +  edge list  +  provenance table
 ```
 
-The LLM runs **three sequential passes** per source:
+**Phase 1** runs three sequential LLM passes per source:
 
 1. **Object types** — entities with identity (tables, schema components, named domain concepts)
 2. **Link types** — relationships between object types (FK constraints, API references, document links)
 3. **Action types & concept hints** — verbs/endpoints and business-rule conditions
 
+**Phase 2** takes the bundle from phase 1 and extracts *specific named instances* from a
+document corpus — every person, company, transaction, date, and connection mentioned.
+Instances are validated against the schema; unrecognised properties are flagged as
+schema amendment candidates rather than silently dropped.
+
 ## Quick start
+
+### Phase 1 — Schema discovery
 
 ``` r
 library(ontologyDiscoverR)
 
-# 1. Create a session and add sources
+# Default provider: Anthropic Claude
 sess <- discover_session("hospital-demo")
+
+# Or use a local model for sensitive data:
+# sess <- discover_session("epstein", llm = function(sp) ellmer::chat_ollama("llama3.3:70b", system_prompt = sp))
+
 sess <- dis_add_file(sess, "path/to/hospital-schema.sql")
 sess <- dis_add_file(sess, "path/to/api-spec.yaml")
 sess <- dis_add_file(sess, "path/to/domain-docs.pdf")
 
-# 2. Run extraction (calls Claude API)
-sess <- dis_extract(sess, verbose = TRUE)
-#> ℹ Processing source 1/3: hospital-schema.sql
-#> ℹ Processing source 2/3: api-spec.yaml
-#> ℹ Processing source 3/3: domain-docs.pdf
-#> ℹ Merging and deduplicating candidates...
-#> ℹ Sources processed: 3
-#> ℹ Object types found: 12 (8 high-confidence, 4 medium, 0 low)
-#> ℹ Link types found: 7
-#> ℹ Action types found: 4
-#> ℹ Concept hints found: 6
-#> ℹ Conflicts requiring review: 2
+sess   <- dis_extract(sess, verbose = TRUE)
+sess   <- dis_review(sess)   # optional Shiny review app
+bundle <- dis_to_bundle(sess, bundle_id = "hospital-v1", bundle_name = "Hospital Ontology")
+```
 
-# 3. Review candidates interactively (optional)
-sess <- dis_review(sess)
+### Phase 2 — Population (extract instances from a corpus)
 
-# 4. Export to a bundle (plain R list)
-bundle <- dis_to_bundle(
-  sess,
-  bundle_id   = "hospital-v1",
-  bundle_name = "Hospital Management Ontology"
-)
+``` r
+# Initialise from the bundle produced above
+pop <- populate_session(schema = bundle)
+
+# Add individual files or a whole directory of PDFs
+pop <- pop_add_corpus(pop, "path/to/documents/")
+
+pop <- pop_extract(pop, verbose = TRUE)
+#> ℹ Extracting instances from source 1/47: report-2019.pdf
+#> ✔ Extracted 312 entities and 178 relationships
+#> ! 4 schema amendment(s) flagged — review with pop_amendments()
+
+# Named list of data frames, one per object type
+records <- pop_to_records(pop)
+records$instances$Person    # data frame: instance_id, name, role, ...
+records$instances$Company   # data frame: instance_id, name, jurisdiction, ...
+records$relationships        # from_instance_id, to_instance_id, link_type_id, evidence
+records$provenance           # instance_id, source_label, page/excerpt, confidence
+
+# Clean edge list for graph packages
+edges <- pop_to_edgelist(pop)   # from, to, type, weight, evidence, from_label, to_label
+
+# Schema amendments to review
+pop_amendments(pop)
+
+# Save/resume for large corpora
+pop_save(pop, "investigation.rds")
+pop <- pop_load("investigation.rds")
 ```
 
 ## Supported source types
@@ -92,6 +118,27 @@ bundle <- dis_to_bundle(
 | PDF | `parse_pdf()` | Text extracted via `pdftools`, up to 50k chars |
 | Markdown / HTML | `parse_markdown()` / `parse_html()` | Heading structure preserved |
 | OWL / RDF | `parse_owl()` | Classes → object types, properties → links |
+
+## LLM providers
+
+All sessions accept an `llm` argument — a one-argument function that returns an
+[ellmer](https://ellmer.tidyverse.org) Chat object:
+
+``` r
+# Anthropic Claude (default)
+discover_session("demo")
+
+# OpenAI GPT-4o
+discover_session("demo", llm = function(sp) ellmer::chat_openai(model = "gpt-4o", system_prompt = sp))
+
+# Local Ollama — recommended for sensitive/private document corpora
+discover_session("epstein",
+  llm = function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp))
+
+# Same pattern for populate_session()
+populate_session(schema = bundle,
+  llm = function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp))
+```
 
 ## Live database example
 

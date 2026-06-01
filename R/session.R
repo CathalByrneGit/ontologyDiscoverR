@@ -1,9 +1,14 @@
 #' Create a new discovery session
 #'
 #' @param label Optional human-readable label for the session
+#' @param llm A one-argument function `f(system_prompt)` returning an ellmer Chat object.
+#'   Controls which LLM provider is used. Defaults to Anthropic Claude.
+#'   Examples:
+#'   - `function(sp) ellmer::chat_openai(model = "gpt-4o", system_prompt = sp)`
+#'   - `function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp)`
 #' @return A DiscoverySession S3 object
 #' @export
-discover_session <- function(label = NULL) {
+discover_session <- function(label = NULL, llm = NULL) {
   session <- list(
     session_id  = new_uuid(),
     label       = label %||% paste0("session-", format(Sys.time(), "%Y%m%d-%H%M%S")),
@@ -15,6 +20,7 @@ discover_session <- function(label = NULL) {
       action_types   = list(),
       concept_hints  = list()
     ),
+    llm_fn        = llm,
     db_connection = NULL,
     extracted     = FALSE
   )
@@ -134,7 +140,7 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_types <- tryCatch(
-        extract_object_types(chunk, existing_types = all_object_types),
+        extract_object_types(chunk, existing_types = all_object_types, llm_fn = session$llm_fn),
         error = function(e) {
           rlang::warn(paste0("Object type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -148,7 +154,7 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_links <- tryCatch(
-        extract_link_types(chunk, all_object_types),
+        extract_link_types(chunk, all_object_types, llm_fn = session$llm_fn),
         error = function(e) {
           rlang::warn(paste0("Link type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -162,7 +168,7 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_actions <- tryCatch(
-        extract_action_types(chunk, all_object_types),
+        extract_action_types(chunk, all_object_types, llm_fn = session$llm_fn),
         error = function(e) {
           rlang::warn(paste0("Action type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -171,7 +177,7 @@ dis_extract <- function(session, verbose = TRUE) {
       all_action_types <- c(all_action_types, new_actions)
 
       new_concepts <- tryCatch(
-        extract_concept_hints(chunk, all_object_types),
+        extract_concept_hints(chunk, all_object_types, llm_fn = session$llm_fn),
         error = function(e) {
           rlang::warn(paste0("Concept hint extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()

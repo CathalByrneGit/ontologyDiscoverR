@@ -1,85 +1,74 @@
-#' Call the Anthropic Claude API
+#' Call an LLM via an ellmer chat provider
 #'
-#' @param system_prompt Character string for the system prompt
-#' @param user_prompt Character string for the user message
-#' @param max_tokens Maximum tokens to generate (default 4096)
-#' @param temperature Sampling temperature (default 0.1)
+#' @param llm_fn A one-argument function `f(system_prompt)` that returns an ellmer Chat
+#'   object. Examples:
+#'   - `function(sp) ellmer::chat_anthropic(system_prompt = sp)` (default)
+#'   - `function(sp) ellmer::chat_openai(model = "gpt-4o", system_prompt = sp)`
+#'   - `function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp)`
+#' @param system_prompt System prompt string
+#' @param user_prompt User message string
 #' @param response_format Either "json" or "text"
-#' @return Parsed response: a list if json, character if text
+#' @return Parsed list if json, character if text
+#' @export
+call_llm <- function(llm_fn = NULL, system_prompt, user_prompt,
+                     response_format = c("json", "text")) {
+  response_format <- match.arg(response_format)
+  fn   <- llm_fn %||% .default_llm_fn()
+  chat <- fn(system_prompt)
+  text <- chat$chat(user_prompt)
+  .parse_llm_response(text, response_format)
+}
+
+#' Call the Anthropic Claude API directly
+#'
+#' Convenience wrapper around `call_llm()` that always uses the Anthropic provider.
+#' Reads `ANTHROPIC_API_KEY` from the environment via ellmer.
+#'
+#' @inheritParams call_llm
+#' @param max_tokens Ignored (kept for backwards compatibility)
+#' @param temperature Ignored (kept for backwards compatibility)
 #' @export
 call_claude <- function(system_prompt, user_prompt,
-                        max_tokens = 4096L,
-                        temperature = 0.1,
+                        max_tokens   = 4096L,
+                        temperature  = 0.1,
                         response_format = c("json", "text")) {
   response_format <- match.arg(response_format)
+  call_llm(.default_llm_fn(), system_prompt, user_prompt, response_format)
+}
 
-  api_key <- Sys.getenv("ANTHROPIC_API_KEY")
-  if (!nzchar(api_key)) {
+# Returns a one-argument function sp -> Chat using Anthropic Claude
+.default_llm_fn <- function() {
+  if (!requireNamespace("ellmer", quietly = TRUE)) {
     rlang::abort(
-      "ANTHROPIC_API_KEY environment variable is not set. Please set it before calling ontologyDiscoverR functions.",
+      c("Package 'ellmer' is required for LLM calls.",
+        i = "Install it with: install.packages('ellmer')",
+        i = "Or pass your own provider: discover_session(llm = function(sp) ellmer::chat_ollama('llama3.3', system_prompt = sp))"),
       call = NULL
     )
   }
-
-  body <- list(
-    model       = "claude-sonnet-4-20250514",
-    max_tokens  = as.integer(max_tokens),
-    temperature = temperature,
-    system      = system_prompt,
-    messages    = list(
-      list(role = "user", content = user_prompt)
+  function(system_prompt) {
+    ellmer::chat_anthropic(
+      system_prompt = system_prompt,
+      model         = "claude-sonnet-4-20250514"
     )
-  )
-
-  req <- httr2::request("https://api.anthropic.com/v1/messages") |>
-    httr2::req_headers(
-      "x-api-key"         = api_key,
-      "anthropic-version" = "2023-06-01",
-      "content-type"      = "application/json"
-    ) |>
-    httr2::req_body_json(body) |>
-    httr2::req_retry(
-      max_tries = 4L,
-      is_transient = function(resp) httr2::resp_status(resp) %in% c(429L, 529L),
-      backoff = function(i) 2^i
-    ) |>
-    httr2::req_error(is_error = function(resp) FALSE)
-
-  resp <- httr2::req_perform(req)
-
-  if (httr2::resp_is_error(resp)) {
-    status <- httr2::resp_status(resp)
-    body_text <- tryCatch(httr2::resp_body_string(resp), error = function(e) "")
-    rlang::abort(sprintf("Claude API error (HTTP %d): %s", status, body_text), call = NULL)
-  }
-
-  parsed <- httr2::resp_body_json(resp, simplifyVector = FALSE)
-  content <- parsed$content
-
-  if (length(content) == 0) {
-    rlang::abort("Claude API returned empty content", call = NULL)
-  }
-
-  text <- content[[1]]$text
-
-  if (response_format == "json") {
-    # Strip markdown fences if present
-    text <- sub("^```json\\s*\\n?", "", text)
-    text <- sub("\\n?```\\s*$", "", text)
-    result <- tryCatch(
-      jsonlite::fromJSON(text, simplifyVector = FALSE),
-      error = function(e) rlang::abort(
-        paste0("Claude returned invalid JSON: ", conditionMessage(e), "\nRaw: ", substr(text, 1, 500)),
-        call = NULL
-      )
-    )
-    result
-  } else {
-    text
   }
 }
 
-# Build the JSON schema section appended to every system prompt
+.parse_llm_response <- function(text, response_format) {
+  if (response_format == "text") return(text)
+  text <- sub("^```json\\s*\\n?", "", text)
+  text <- sub("\\n?```\\s*$",     "", text)
+  tryCatch(
+    jsonlite::fromJSON(text, simplifyVector = FALSE),
+    error = function(e) rlang::abort(
+      paste0("LLM returned invalid JSON: ", conditionMessage(e),
+             "\nRaw: ", substr(text, 1, 500)),
+      call = NULL
+    )
+  )
+}
+
+# Append a JSON schema instruction to a system prompt
 json_schema_footer <- function(schema_json) {
   paste0(
     "\n\nRespond ONLY with a valid JSON object matching the schema provided. ",

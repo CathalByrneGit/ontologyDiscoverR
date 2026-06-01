@@ -9,6 +9,7 @@ Description: Uses large language models to extract ontology structure (object ty
     that can be used standalone or passed to downstream ontology packages.
 Depends: R (>= 4.1)
 Imports:
+    ellmer,
     httr2,
     jsonlite,
     rlang,
@@ -26,6 +27,7 @@ Suggests:
     xml2,
     yaml,
     mockery,
+    withr,
     testthat (>= 3.0.0),
     knitr,
     rmarkdown

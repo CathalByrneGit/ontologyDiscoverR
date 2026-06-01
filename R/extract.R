@@ -3,7 +3,7 @@
 #' @param source A DiscoverySource object
 #' @param existing_types List of already-discovered CandidateObjectType objects
 #' @return A list of CandidateObjectType objects
-extract_object_types <- function(source, existing_types = list()) {
+extract_object_types <- function(source, existing_types = list(), llm_fn = NULL) {
   system_prompt <- paste0(
     "You are extracting the data model from a document. ",
     "Identify the main ENTITIES (things that have identity, can be stored in a database ",
@@ -37,7 +37,7 @@ extract_object_types <- function(source, existing_types = list()) {
     source$raw_text
   )
 
-  result <- call_claude(system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
 
   object_types_raw <- result$object_types %||% list()
 
@@ -68,7 +68,7 @@ extract_object_types <- function(source, existing_types = list()) {
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects found in pass 1
 #' @return A list of CandidateLinkType objects
-extract_link_types <- function(source, object_types) {
+extract_link_types <- function(source, object_types, llm_fn = NULL) {
   type_list <- paste(
     sapply(object_types, function(t) sprintf("  - %s (%s)", t$id, t$display_name)),
     collapse = "\n"
@@ -97,7 +97,7 @@ extract_link_types <- function(source, object_types) {
     source$raw_text
   )
 
-  result <- call_claude(system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
   link_types_raw <- result$link_types %||% list()
 
   valid_ids <- sapply(object_types, function(t) t$id)
@@ -130,7 +130,7 @@ extract_link_types <- function(source, object_types) {
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects
 #' @return A list of CandidateActionType objects
-extract_action_types <- function(source, object_types) {
+extract_action_types <- function(source, object_types, llm_fn = NULL) {
   type_list <- paste(sapply(object_types, function(t) t$id), collapse = ", ")
 
   system_prompt <- paste0(
@@ -153,7 +153,7 @@ extract_action_types <- function(source, object_types) {
     source$raw_text
   )
 
-  result <- call_claude(system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
   action_types_raw <- result$action_types %||% list()
 
   lapply(action_types_raw, function(at) {
@@ -173,7 +173,7 @@ extract_action_types <- function(source, object_types) {
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects
 #' @return A list of CandidateConceptHint objects
-extract_concept_hints <- function(source, object_types) {
+extract_concept_hints <- function(source, object_types, llm_fn = NULL) {
   type_list <- paste(
     sapply(object_types, function(t) {
       prop_names <- paste(sapply(t$properties, function(p) p$id), collapse = ", ")
@@ -204,7 +204,7 @@ extract_concept_hints <- function(source, object_types) {
     source$raw_text
   )
 
-  result <- call_claude(system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
   hints_raw <- result$concept_hints %||% list()
 
   lapply(hints_raw, function(ch) {
