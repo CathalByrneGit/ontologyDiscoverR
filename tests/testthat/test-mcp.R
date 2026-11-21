@@ -6,8 +6,10 @@ test_that("MCP builders name ontologyAPI when it is missing", {
 
 test_that("ontologyAPI::mcp_server() registers the discover and populate tools", {
   skip_if_not_installed("ontologyAPI")
-  skip_if_not_installed("duckdb")
   skip_if_not_installed("DBI")
+  has_duckdb <- requireNamespace("duckdb", quietly = TRUE)
+  skip_if(!has_duckdb && !requireNamespace("RSQLite", quietly = TRUE),
+          "needs duckdb or RSQLite")
 
   sess <- discover_session("mcp", llm = fake_chat(list()))
   sess$candidates$object_types <- list(local({
@@ -20,9 +22,9 @@ test_that("ontologyAPI::mcp_server() registers the discover and populate tools",
   }))
   bundle <- dis_to_bundle(sess, "mcp-test", "MCP test")
 
-  con <- DBI::dbConnect(duckdb::duckdb())
-  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
-  DBI::dbWriteTable(con, "patients", data.frame(patient_id = 1:2, full_name = c("A", "B")))
+  con <- if (has_duckdb) DBI::dbConnect(duckdb::duckdb()) else DBI::dbConnect(RSQLite::SQLite(), ":memory:")
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbWriteTable(con, ontologySpecR::object_table(bundle$objects[[1]]), data.frame(patient_id = 1:2, full_name = c("A", "B")))
 
   svc    <- ontologyAPI::ontology_service(bundle, con, actor = "test")
   server <- ontologyAPI::mcp_server(svc, name = "discover-test")

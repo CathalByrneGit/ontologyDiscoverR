@@ -24,6 +24,7 @@ Suggests:
     ontologyAPI (>= 0.2.0),
     DBI,
     duckdb,
+    RSQLite,
     shiny,
     bslib,
     DT,
