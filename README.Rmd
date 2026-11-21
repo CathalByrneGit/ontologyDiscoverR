@@ -18,11 +18,13 @@ knitr::opts_chunk$set(
 
 **AI-assisted ontology discovery from documents and schemas.**
 
-`ontologyDiscoverR` uses the Anthropic Claude API to automatically extract
-ontology structure — object types, properties, link types, action types, and
-concept definitions — from database schemas, API specs, documentation, and
-data files. The output is a structured bundle (a plain R list) that works
-standalone or can feed into downstream ontology tooling.
+`ontologyDiscoverR` uses a large language model — any provider supported by
+[ellmer](https://ellmer.tidyverse.org) — to extract ontology structure (object
+types, properties, link types, action types and concept definitions) from
+database schemas, API specs, documentation and data files. The output is a
+canonical [ontologySpecR](https://github.com/CathalByrneGit/ontologySpecR)
+bundle, built with the spec constructors and checked with
+`ontologySpecR::validate_bundle()`, ready for the rest of the ecosystem.
 
 ## Installation
 
@@ -31,23 +33,23 @@ standalone or can feed into downstream ontology tooling.
 pak::pkg_install("cathalbyrnegit/ontologydiscoverr")
 ```
 
-Set your Anthropic API key before use:
+Choose an LLM provider (there is no built-in default; see
+[LLM providers](#llm-providers)):
 
-```{r apikey}
-Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
-# Or add ANTHROPIC_API_KEY=your-key-here to your ~/.Renviron
+```{r provider}
+options(ontologyDiscoverR.chat = "openai/gpt-4.1")   # or pass llm = to discover_session()
 ```
 
 ## How it works
 
-The package has two phases, each powered by a pluggable LLM provider (Anthropic,
-OpenAI, Ollama/local, or any ellmer-compatible backend):
+The package has two phases, each powered by the LLM provider you choose
+(Anthropic, OpenAI, Gemini, Azure, Bedrock, Ollama or any other ellmer backend):
 
 ```
 Phase 1 — Schema discovery
   Source documents / schemas / APIs
             ↓  parse → extract → merge → review
-       ontology bundle (plain R list)
+       ontologySpecR bundle (validated)
 
 Phase 2 — Population
        ontology bundle  +  document corpus
@@ -72,16 +74,16 @@ flagged as schema amendment candidates.
 ```{r phase1}
 library(ontologyDiscoverR)
 
-# Default provider: Anthropic Claude
-sess <- discover_session("hospital-demo")
+sess <- discover_session("hospital-demo", llm = ellmer::chat_openai(model = "gpt-4.1"))
 
 # Or use a local model for sensitive data:
-# sess <- discover_session("epstein", llm = function(sp) ellmer::chat_ollama("llama3.3:70b", system_prompt = sp))
+# sess <- discover_session("investigation", llm = ellmer::chat_ollama(model = "llama3.3"))
 
 sess   <- dis_add_file(sess, "path/to/hospital-schema.sql")
 sess   <- dis_extract(sess, verbose = TRUE)
 sess   <- dis_review(sess)   # optional Shiny review app
 bundle <- dis_to_bundle(sess, bundle_id = "hospital-v1", bundle_name = "Hospital Ontology")
+ontologySpecR::write_bundle(bundle, "hospital-v1.json")
 ```
 
 ### Phase 2 — Population
@@ -116,17 +118,22 @@ pop_save(pop, "session.rds")    # save/resume for large corpora
 
 ## LLM providers
 
+`llm` accepts an ellmer Chat object, a `"provider/model"` string (passed to
+`ellmer::chat()`), or a `function(system_prompt)` returning a Chat. With
+`llm = NULL`, `getOption("ontologyDiscoverR.chat")` and then the
+`ONTOLOGYDISCOVERR_CHAT` environment variable are used; if neither is set,
+discovery stops with an error explaining how to choose one.
+
 ```{r providers}
-# Anthropic Claude (default)
-discover_session("demo")
-
-# OpenAI GPT-4o
-discover_session("demo", llm = function(sp) ellmer::chat_openai(model = "gpt-4o", system_prompt = sp))
-
-# Local Ollama — for sensitive/private corpora
-discover_session("investigation",
-  llm = function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp))
+discover_session("demo", llm = ellmer::chat_anthropic())
+discover_session("demo", llm = ellmer::chat_openai(model = "gpt-4.1"))
+discover_session("demo", llm = ellmer::chat_google_gemini())
+discover_session("demo", llm = "ollama/llama3.3")   # local: nothing leaves your machine
 ```
+
+Structured output is used when the provider supports it. The provider and model
+are recorded in `sess$llm_info` and on every candidate (`extracted_by`). See
+"Choosing a model" in `vignette("from-schema")` for tips on small local models.
 
 ## Live database example
 
@@ -174,14 +181,13 @@ The Shiny app has four panels:
 
 ## MCP conversational building
 
-If `ontologyMCP` is installed, you can build the ontology interactively:
+With [ontologyAPI](https://github.com/CathalByrneGit/ontologyAPI) installed,
+you can build the ontology interactively over MCP:
 
 ```{r mcp}
-library(ontologyMCP)
-
-server <- mcp_server("ontology-builder")
-server <- dis_add_mcp_tool(server, sess)
-mcp_start(server)
+server <- ontologyAPI::mcp_server(ontologyAPI::ontology_service(existing_bundle, con))
+dis_add_mcp_tool(server, sess)     # registers "build_ontology"
+ontologyAPI::serve_mcp(server)
 
 # Now an LLM agent can say things like:
 # "Add a link from Hospital to Patient called Admission"
@@ -191,10 +197,11 @@ mcp_start(server)
 
 ## Testing
 
-All tests mock `call_claude()` — no API key required, no cost:
+The test suite runs on a fake ellmer Chat: no network, no API key, no cost.
+Optional live smoke tests run per provider when its credentials are present and
+`ONTOLOGYDISCOVERR_LIVE_TESTS=true`.
 
 ```{r test}
-# install.packages("mockery")
 devtools::test()
 ```
 
@@ -202,14 +209,16 @@ devtools::test()
 
 ```
 R/
-  session.R           # discover_session, dis_add_*, dis_extract, dis_summary, dis_to_bundle
-  llm.R               # call_claude (Anthropic API via httr2)
-  parsers/            # one file per source type
+  session.R           # discover_session, dis_add_*, dis_extract, dis_summary
+  bundle.R            # dis_to_bundle(): candidates -> ontologySpecR bundle
+  llm.R               # call_llm(), provider resolution, structured output
+  llm_types.R         # ellmer type specs for every structured call
+  parse_*.R           # one file per source type
   extract.R           # four LLM extraction passes
   merge.R             # merge_candidates, detect_conflicts
   candidates.R        # S3 constructors for all four candidate types
   review.R            # dis_review() Shiny app
-  mcp_builder.R       # dis_add_mcp_tool() (optional)
+  mcp_builder.R       # dis_add_mcp_tool(), pop_add_mcp_tool() (needs ontologyAPI)
   types.R             # normalise_type, validate_candidate
   utils.R             # UUID, truncation, JSON helpers
 

@@ -2,8 +2,12 @@
 #'
 #' @param source A DiscoverySource object
 #' @param existing_types List of already-discovered CandidateObjectType objects
+#' @param llm Chat provider; see [call_llm()].
+#' @param extracted_by "provider/model" label recorded in provenance.
 #' @return A list of CandidateObjectType objects
-extract_object_types <- function(source, existing_types = list(), llm_fn = NULL) {
+extract_object_types <- function(source, existing_types = list(), llm = NULL,
+                                 extracted_by = NULL) {
+  extracted_by <- extracted_by %||% .llm_info(llm)$label
   system_prompt <- paste0(
     "You are extracting the data model from a document. ",
     "Identify the main ENTITIES (things that have identity, can be stored in a database ",
@@ -37,7 +41,8 @@ extract_object_types <- function(source, existing_types = list(), llm_fn = NULL)
     source$raw_text
   )
 
-  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm, system_prompt, user_prompt, response_format = "json",
+                     type = .llm_type("object_types"))
 
   object_types_raw <- result$object_types %||% list()
 
@@ -55,10 +60,12 @@ extract_object_types <- function(source, existing_types = list(), llm_fn = NULL)
       id           = ot$id %||% "Unknown",
       display_name = ot$display_name %||% ot$id %||% "Unknown",
       description  = ot$description %||% "",
-      source_refs  = list(new_source_ref(source$source_id, source$source_label, ot$source_ref %||% "")),
+      source_refs  = list(new_source_ref(source$source_id, source$source_label, ot$source_ref %||% "",
+                                                  extracted_by = extracted_by)),
       confidence   = as.numeric(ot$confidence %||% 0.5),
       primary_key  = ot$primary_key,
-      properties   = props
+      properties   = props,
+      extracted_by = extracted_by
     )
   })
 }
@@ -67,8 +74,12 @@ extract_object_types <- function(source, existing_types = list(), llm_fn = NULL)
 #'
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects found in pass 1
+#' @param llm Chat provider; see [call_llm()].
+#' @param extracted_by "provider/model" label recorded in provenance.
 #' @return A list of CandidateLinkType objects
-extract_link_types <- function(source, object_types, llm_fn = NULL) {
+extract_link_types <- function(source, object_types, llm = NULL,
+                                 extracted_by = NULL) {
+  extracted_by <- extracted_by %||% .llm_info(llm)$label
   type_list <- paste(
     sapply(object_types, function(t) sprintf("  - %s (%s)", t$id, t$display_name)),
     collapse = "\n"
@@ -97,7 +108,8 @@ extract_link_types <- function(source, object_types, llm_fn = NULL) {
     source$raw_text
   )
 
-  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm, system_prompt, user_prompt, response_format = "json",
+                     type = .llm_type("link_types"))
   link_types_raw <- result$link_types %||% list()
 
   valid_ids <- sapply(object_types, function(t) t$id)
@@ -117,8 +129,10 @@ extract_link_types <- function(source, object_types, llm_fn = NULL) {
         cardinality  = lt$cardinality %||% "one_to_many",
         directed     = isTRUE(lt$directed %||% TRUE),
         description  = lt$description %||% "",
-        source_refs  = list(new_source_ref(source$source_id, source$source_label, lt$source_ref %||% "")),
-        confidence   = as.numeric(lt$confidence %||% 0.5)
+        source_refs  = list(new_source_ref(source$source_id, source$source_label, lt$source_ref %||% "",
+                                                    extracted_by = extracted_by)),
+        confidence   = as.numeric(lt$confidence %||% 0.5),
+        extracted_by = extracted_by
       )
     }),
     Negate(is.null)
@@ -129,8 +143,12 @@ extract_link_types <- function(source, object_types, llm_fn = NULL) {
 #'
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects
+#' @param llm Chat provider; see [call_llm()].
+#' @param extracted_by "provider/model" label recorded in provenance.
 #' @return A list of CandidateActionType objects
-extract_action_types <- function(source, object_types, llm_fn = NULL) {
+extract_action_types <- function(source, object_types, llm = NULL,
+                                 extracted_by = NULL) {
+  extracted_by <- extracted_by %||% .llm_info(llm)$label
   type_list <- paste(sapply(object_types, function(t) t$id), collapse = ", ")
 
   system_prompt <- paste0(
@@ -153,7 +171,8 @@ extract_action_types <- function(source, object_types, llm_fn = NULL) {
     source$raw_text
   )
 
-  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm, system_prompt, user_prompt, response_format = "json",
+                     type = .llm_type("action_types"))
   action_types_raw <- result$action_types %||% list()
 
   lapply(action_types_raw, function(at) {
@@ -162,8 +181,10 @@ extract_action_types <- function(source, object_types, llm_fn = NULL) {
       display_name   = at$display_name %||% at$id %||% "Unknown Action",
       object_type_id = at$object_type_id %||% NULL,
       description    = at$description %||% "",
-      source_refs    = list(new_source_ref(source$source_id, source$source_label, at$source_ref %||% "")),
-      confidence     = as.numeric(at$confidence %||% 0.5)
+      source_refs    = list(new_source_ref(source$source_id, source$source_label, at$source_ref %||% "",
+                                                      extracted_by = extracted_by)),
+      confidence     = as.numeric(at$confidence %||% 0.5),
+      extracted_by = extracted_by
     )
   })
 }
@@ -172,8 +193,12 @@ extract_action_types <- function(source, object_types, llm_fn = NULL) {
 #'
 #' @param source A DiscoverySource object
 #' @param object_types List of CandidateObjectType objects
+#' @param llm Chat provider; see [call_llm()].
+#' @param extracted_by "provider/model" label recorded in provenance.
 #' @return A list of CandidateConceptHint objects
-extract_concept_hints <- function(source, object_types, llm_fn = NULL) {
+extract_concept_hints <- function(source, object_types, llm = NULL,
+                                 extracted_by = NULL) {
+  extracted_by <- extracted_by %||% .llm_info(llm)$label
   type_list <- paste(
     sapply(object_types, function(t) {
       prop_names <- paste(sapply(t$properties, function(p) p$id), collapse = ", ")
@@ -204,7 +229,8 @@ extract_concept_hints <- function(source, object_types, llm_fn = NULL) {
     source$raw_text
   )
 
-  result <- call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
+  result <- call_llm(llm, system_prompt, user_prompt, response_format = "json",
+                     type = .llm_type("concept_hints"))
   hints_raw <- result$concept_hints %||% list()
 
   lapply(hints_raw, function(ch) {
@@ -214,14 +240,16 @@ extract_concept_hints <- function(source, object_types, llm_fn = NULL) {
       object_type_id = ch$object_type_id %||% NULL,
       sql_expr       = ch$sql_expr %||% "",
       description    = ch$description %||% "",
-      source_refs    = list(new_source_ref(source$source_id, source$source_label, ch$source_ref %||% "")),
-      confidence     = as.numeric(ch$confidence %||% 0.5)
+      source_refs    = list(new_source_ref(source$source_id, source$source_label, ch$source_ref %||% "",
+                                                      extracted_by = extracted_by)),
+      confidence     = as.numeric(ch$confidence %||% 0.5),
+      extracted_by = extracted_by
     )
   })
 }
 
 # Chunk a large source into smaller pieces for LLM processing
-chunk_source <- function(source, max_tokens = 8000L) {
+chunk_source <- function(source, max_tokens = getOption("ontologyDiscoverR.chunk_tokens", 8000L)) {
   chars_per_token <- 4L
   max_chars <- max_tokens * chars_per_token
   text <- source$raw_text

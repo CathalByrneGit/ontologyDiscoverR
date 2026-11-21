@@ -32,38 +32,30 @@ test_that("dis_add_file auto-detects type from extension", {
   expect_equal(sess$sources[[1]]$source_type, "sql_ddl")
 })
 
-test_that("dis_extract runs full pipeline with mocked LLM", {
-  skip_if_not_installed("mockery")
-  skip_if_not_installed("withr")
+test_that("dis_extract runs the full pipeline on the fake Chat", {
+  fixture_path <- system.file("fixtures", "example-schema.sql", package = "ontologyDiscoverR")
+  skip_if(!nzchar(fixture_path), "Fixture file not found")
 
-  fixture_path <- file.path(
-    system.file(package = "ontologyDiscoverR"),
-    "fixtures", "example-schema.sql"
-  )
-  skip_if(!file.exists(fixture_path), "Fixture file not found")
-
-  sess <- discover_session("test")
+  chat <- fake_chat(hospital_responder, provider = "Ollama", model = "llama-test")
+  sess <- discover_session("test", llm = chat)
   sess <- dis_add_file(sess, fixture_path)
 
-  call_count <- 0L
-  mock_responses <- list(
-    hospital_object_types_response(),
-    hospital_link_types_response(),
-    hospital_action_types_response(),
-    hospital_concept_hints_response()
-  )
-
-  withr::with_envvar(list(ANTHROPIC_API_KEY = "test-key"), {
-    mockery::stub(dis_extract, "call_claude", function(...) {
-      call_count <<- call_count + 1L
-      mock_responses[[min(call_count, length(mock_responses))]]
-    })
-    result <- dis_extract(sess, verbose = FALSE)
-  })
+  result <- dis_extract(sess, verbose = FALSE)
 
   expect_s3_class(result, "DiscoverySession")
   expect_true(result$extracted)
-  expect_true(length(result$candidates$object_types) >= 1)
+  expect_length(result$candidates$object_types, 3L)
+  expect_length(result$candidates$link_types,   2L)
+  expect_equal(result$llm_info$label, "ollama/llama-test")
+  expect_equal(result$candidates$object_types[[1]]$extracted_by, "ollama/llama-test")
+})
+
+test_that("dis_extract errors clearly when no provider is configured", {
+  without_configured_provider({
+    sess <- dis_add_source(discover_session("none"), fake_source())
+    expect_error(dis_extract(sess, verbose = FALSE),
+                 class = "ontologyDiscoverR_no_provider")
+  })
 })
 
 test_that("dis_to_bundle creates a valid bundle from approved candidates", {
@@ -89,10 +81,11 @@ test_that("dis_to_bundle creates a valid bundle from approved candidates", {
   bundle <- dis_to_bundle(sess, bundle_id = "hospital-demo", bundle_name = "Hospital Demo")
 
   expect_s3_class(bundle, "ontology_bundle")
-  expect_equal(bundle$bundle_id,   "hospital-demo")
-  expect_equal(bundle$bundle_name, "Hospital Demo")
-  expect_equal(length(bundle$object_types), 2L)
-  expect_equal(length(bundle$link_types),   1L)
+  expect_true(ontologySpecR::validate_bundle(bundle))
+  expect_equal(ontologySpecR::bundle_id(bundle), "hospital-demo")
+  expect_equal(bundle$metadata$name, "Hospital Demo")
+  expect_length(ontologySpecR::bundle_object_types(bundle), 2L)
+  expect_length(ontologySpecR::bundle_link_types(bundle),   1L)
 })
 
 test_that("dis_to_bundle filters by min_confidence for pending candidates", {
@@ -102,9 +95,9 @@ test_that("dis_to_bundle filters by min_confidence for pending candidates", {
   sess <- discover_session("conf-test")
   sess$candidates$object_types <- list(ot_high, ot_low)
 
-  bundle <- dis_to_bundle(sess, "test", "Test", min_confidence = 0.5)
+  bundle <- suppressWarnings(dis_to_bundle(sess, "test", "Test", min_confidence = 0.5))
 
-  included_ids <- sapply(bundle$object_types, function(ot) ot$id)
+  included_ids <- names(ontologySpecR::bundle_object_types(bundle))
   expect_true("Patient" %in% included_ids)
   expect_false("Unknown" %in% included_ids)
 })
@@ -125,9 +118,13 @@ test_that("dis_to_bundle excludes link types referencing non-included object typ
   sess$candidates$object_types <- list(ot_approved)
   sess$candidates$link_types   <- list(lt_valid, lt_dangling)
 
-  bundle <- dis_to_bundle(sess, "test", "Test")
+  expect_warning(
+    bundle <- suppressWarnings(dis_to_bundle(sess, "test", "Test"),
+                               classes = "ontologyDiscoverR_surrogate_key"),
+    class = "ontologyDiscoverR_dropped_candidate"
+  )
 
-  link_ids <- sapply(bundle$link_types, function(lt) lt$id)
+  link_ids <- names(ontologySpecR::bundle_link_types(bundle))
   expect_true("self_ref"  %in% link_ids)
   expect_false("dangling" %in% link_ids)
 })
