@@ -19,7 +19,10 @@ via the `parse_pdf()` and `parse_markdown()` parsers.
 
 ```{r setup}
 library(ontologyDiscoverR)
-Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
+# Any ellmer provider works; see "Choosing a model" in
+# vignette("from-schema"). For private documents, a local model keeps
+# everything on your machine:
+options(ontologyDiscoverR.chat = "ollama/llama3.3")
 ```
 
 ## Adding PDF and Markdown sources

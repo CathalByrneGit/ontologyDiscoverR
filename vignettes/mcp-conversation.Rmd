@@ -13,24 +13,34 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
 
 ## Iterative ontology construction via conversation
 
-When `ontologyMCP` is installed, you can expose the session as an MCP tool
-and build the ontology interactively through a conversation with Claude.
+With [ontologyAPI](https://github.com/CathalByrneGit/ontologyAPI) installed,
+you can add the discovery session to an MCP server as a tool and build the
+ontology through a conversation with any MCP-capable assistant.
 
 ```{r setup}
 library(ontologyDiscoverR)
-# install.packages("ontologyMCP")  # optional companion package
-library(ontologyMCP)
-Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")
+# remotes::install_github("CathalByrneGit/ontologyAPI")  # optional companion package
 ```
 
 ## Setting up the MCP server
 
+`ontologyAPI::mcp_server()` serves an existing bundle and its data. Add the
+discovery tool to it with `dis_add_mcp_tool()`, which registers
+`build_ontology` through `ontologyAPI::mcp_add_tool()`. The tool uses the
+session's LLM provider unless you pass another one with `llm =`.
+
 ```{r mcp}
-sess   <- discover_session("mcp-demo")
-server <- ontologyMCP::mcp_server("ontology-builder")
-server <- dis_add_mcp_tool(server, sess)
-ontologyMCP::mcp_start(server)
+sess <- discover_session("mcp-demo", llm = ellmer::chat_openai(model = "gpt-4.1"))
+
+svc    <- ontologyAPI::ontology_service(existing_bundle, con)
+server <- ontologyAPI::mcp_server(svc, name = "ontology-builder")
+dis_add_mcp_tool(server, sess)                 # adds "build_ontology"
+pop_add_mcp_tool(server, pop_sess)             # optional: adds "query_population"
+ontologyAPI::serve_mcp(server, transport = "stdio")
 ```
+
+The server is modified in place, so the return value of `dis_add_mcp_tool()`
+can be ignored.
 
 ## Example conversation flow
 
@@ -38,18 +48,18 @@ Once the server is running, an LLM agent can interact with it:
 
 ```
 User: "Look at this database schema and build me an ontology for a hospital"
-Claude: [parses schema, calls dis_extract, lists discovered types]
+Assistant: [parses schema, calls dis_extract, lists discovered types]
 
 User: "The Patient table also connects to the Ward table via ward_assignments"
-Claude: [calls build_ontology("Add a link from Patient to Ward called ward_assignments, many_to_many")]
+Assistant: [calls build_ontology("Add a link from Patient to Ward called ward_assignments, many_to_many")]
 → Done: Added link type 'ward_assignments'
 
 User: "Add a concept for high-risk patients: age > 65 OR previous_admissions > 0"
-Claude: [calls build_ontology("Add concept high_risk_patient for Patient where age > 65 OR previous_admissions > 0")]
+Assistant: [calls build_ontology("Add concept high_risk_patient for Patient where age > 65 OR previous_admissions > 0")]
 → Done: Added concept hint 'high_risk_patient'
 
 User: "Looks good — approve everything and generate the bundle"
-Claude: [calls build_ontology("Approve all pending object types"), then dis_to_bundle()]
+Assistant: [calls build_ontology("Approve all pending object types"), then dis_to_bundle()]
 ```
 
 ## Supported natural language instructions
@@ -65,12 +75,9 @@ The `build_ontology` tool understands:
 | `"Approve all pending object types"` | Sets status = approved |
 | `"Reject the concept high_risk"` | Sets status = rejected for that id |
 
-## Retrieving the final session
+## Getting the bundle
 
-After the conversation, retrieve the updated session and build the bundle:
-
-```{r final}
-final_sess <- ontologyMCP::mcp_get_session(server, "ontology-builder")
-bundle     <- dis_to_bundle(final_sess, "mcp-bundle", "MCP-built Ontology",
-                             include_concepts = TRUE)
-```
+Ask for it in the conversation ("Generate the bundle as hospital-v1"). The tool
+calls `dis_to_bundle()`, which builds the bundle with the ontologySpecR
+constructors and validates it, and reports any validation problem back to the
+assistant, naming the candidate that caused it.

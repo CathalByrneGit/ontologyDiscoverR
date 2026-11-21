@@ -5,23 +5,28 @@
 #' the session's configured LLM provider (respects the `llm` argument passed
 #' to `discover_session()`).
 #'
-#' @param mcp_server An MCP server object (from ontologyMCP)
+#' @param mcp_server An MCP server from `ontologyAPI::mcp_server()`.
 #' @param session A DiscoverySession object
-#' @return The MCP server with the tool registered
+#' @param llm Optional LLM provider for the tool (same forms as in
+#'   [discover_session()]); defaults to the session's provider.
+#' @return The MCP server with the tool registered (invisibly; it is also
+#'   modified in place).
 #' @export
-dis_add_mcp_tool <- function(mcp_server, session) {
-  if (!requireNamespace("ontologyMCP", quietly = TRUE)) {
-    rlang::abort("Package 'ontologyMCP' is required. It is an optional companion package.")
-  }
+dis_add_mcp_tool <- function(mcp_server, session, llm = NULL) {
+  .require_ontologyapi()
   stopifnot(inherits(session, "DiscoverySession"))
+  if (!is.null(llm)) {
+    session$llm_fn   <- llm
+    session$llm_info <- .llm_info(llm)
+  }
 
   session_env         <- new.env(parent = emptyenv())
   session_env$session <- session
 
-  ontologyMCP::mcp_add_tool(
-    mcp_server,
-    name        = "build_ontology",
-    description = paste0(
+  ontologyAPI::mcp_add_tool(
+    server       = mcp_server,
+    name         = "build_ontology",
+    description  = paste0(
       "Add or modify ontology elements (object types, link types, actions, concepts), ",
       "approve/reject candidates, summarise findings, or generate a bundle.\n",
       "Example instructions:\n",
@@ -41,7 +46,7 @@ dis_add_mcp_tool <- function(mcp_server, session) {
       ),
       required = list("instruction")
     ),
-    handler = function(params) {
+    handler      = function(params) {
       result <- tryCatch(
         .handle_dis_mcp_instruction(params$instruction, session_env),
         error = function(e) list(success = FALSE, message = conditionMessage(e))
@@ -54,7 +59,7 @@ dis_add_mcp_tool <- function(mcp_server, session) {
     }
   )
 
-  mcp_server
+  invisible(mcp_server)
 }
 
 #' Add a population query tool to an MCP server
@@ -63,23 +68,22 @@ dis_add_mcp_tool <- function(mcp_server, session) {
 #' agent inspect extracted instances, get entity counts, retrieve the edge list,
 #' and review schema amendments through conversation.
 #'
-#' @param mcp_server An MCP server object (from ontologyMCP)
+#' @param mcp_server An MCP server from `ontologyAPI::mcp_server()`.
 #' @param pop_sess A PopulateSession object
-#' @return The MCP server with the tool registered
+#' @return The MCP server with the tool registered (invisibly; it is also
+#'   modified in place).
 #' @export
 pop_add_mcp_tool <- function(mcp_server, pop_sess) {
-  if (!requireNamespace("ontologyMCP", quietly = TRUE)) {
-    rlang::abort("Package 'ontologyMCP' is required. It is an optional companion package.")
-  }
+  .require_ontologyapi()
   stopifnot(inherits(pop_sess, "PopulateSession"))
 
   env         <- new.env(parent = emptyenv())
   env$pop_sess <- pop_sess
 
-  ontologyMCP::mcp_add_tool(
-    mcp_server,
-    name        = "query_population",
-    description = paste0(
+  ontologyAPI::mcp_add_tool(
+    server       = mcp_server,
+    name         = "query_population",
+    description  = paste0(
       "Query and manage a populated instance dataset.\n",
       "Example instructions:\n",
       "  'How many Person instances were found?'\n",
@@ -98,7 +102,7 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       ),
       required = list("instruction")
     ),
-    handler = function(params) {
+    handler      = function(params) {
       result <- tryCatch(
         .handle_pop_mcp_instruction(params$instruction, env),
         error = function(e) list(success = FALSE, message = conditionMessage(e))
@@ -111,7 +115,18 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
     }
   )
 
-  mcp_server
+  invisible(mcp_server)
+}
+
+.require_ontologyapi <- function() {
+  if (!requireNamespace("ontologyAPI", quietly = TRUE)) {
+    rlang::abort(
+      c("Package 'ontologyAPI' is required for MCP tools.",
+        i = "Install it with: remotes::install_github('CathalByrneGit/ontologyAPI')"),
+      call = NULL
+    )
+  }
+  invisible(TRUE)
 }
 
 # ---------------------------------------------------------------------------
@@ -142,7 +157,8 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
     "Respond ONLY with valid JSON. No preamble."
   )
 
-  parsed <- call_llm(llm_fn, system_prompt, instruction, response_format = "json")
+  parsed <- call_llm(llm_fn, system_prompt, instruction, response_format = "json",
+                     type = .llm_type("mcp_action"))
   action <- parsed$action %||% "unknown"
 
   if (action == "add_object_type") {
@@ -156,7 +172,9 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       description  = parsed$description %||% "",
       properties   = props,
       confidence   = 0.9,
-      source_refs  = list(new_source_ref("mcp", "MCP conversation", instruction))
+      source_refs  = list(new_source_ref("mcp", "MCP conversation", instruction,
+                                         extracted_by = sess$llm_info$label)),
+      extracted_by = sess$llm_info$label %||% NA_character_
     )
     cand$status <- "approved"
     session_env$session$candidates$object_types <- c(
@@ -171,7 +189,9 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       to_type_id   = parsed$to_type_id   %||% "",
       cardinality  = parsed$cardinality  %||% "one_to_many",
       confidence   = 0.9,
-      source_refs  = list(new_source_ref("mcp", "MCP conversation", instruction))
+      source_refs  = list(new_source_ref("mcp", "MCP conversation", instruction,
+                                           extracted_by = sess$llm_info$label)),
+      extracted_by = sess$llm_info$label %||% NA_character_
     )
     cand$status <- "approved"
     session_env$session$candidates$link_types <- c(
@@ -186,7 +206,9 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       sql_expr       = parsed$sql_expr %||% "",
       description    = parsed$description %||% "",
       confidence     = 0.9,
-      source_refs    = list(new_source_ref("mcp", "MCP conversation", instruction))
+      source_refs    = list(new_source_ref("mcp", "MCP conversation", instruction,
+                                           extracted_by = sess$llm_info$label)),
+      extracted_by = sess$llm_info$label %||% NA_character_
     )
     cand$status <- "approved"
     session_env$session$candidates$concept_hints <- c(
@@ -200,7 +222,9 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       object_type_id = parsed$object_type_id %||% NULL,
       description    = parsed$description %||% "",
       confidence     = 0.9,
-      source_refs    = list(new_source_ref("mcp", "MCP conversation", instruction))
+      source_refs    = list(new_source_ref("mcp", "MCP conversation", instruction,
+                                           extracted_by = sess$llm_info$label)),
+      extracted_by = sess$llm_info$label %||% NA_character_
     )
     cand$status <- "approved"
     session_env$session$candidates$action_types <- c(
@@ -260,7 +284,7 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
     )
     session_env$session$last_bundle <- bundle
     msg <- sprintf("Bundle '%s' generated: %d object types, %d link types",
-                   bundle$bundle_id, length(bundle$object_types), length(bundle$link_types))
+                   bundle$bundleId, length(bundle$objects), length(bundle$links))
     list(success = TRUE, message = msg)
 
   } else {
@@ -276,9 +300,9 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
   pop    <- env$pop_sess
   schema <- pop$schema
 
-  type_ids  <- sapply(schema$object_types %||% list(), function(t) t$id)
+  type_ids  <- names(ontologySpecR::bundle_object_types(schema))
   n_by_type <- vapply(type_ids, function(tid) {
-    sum(sapply(pop$instances$entities, function(e) e$type_id == tid))
+    sum(vapply(pop$instances$entities, function(e) identical(e$type_id, tid), logical(1)))
   }, integer(1))
 
   summary_text <- paste(
@@ -303,7 +327,7 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
     amends <- pop$amendments
     if (length(amends) == 0) return(list(success = TRUE, message = "No schema amendments flagged."))
     rows <- sapply(amends, function(a) {
-      sprintf("  [%s] %s.%s — %s (evidence: %s)",
+      sprintf("  [%s] %s.%s \u2014 %s (evidence: %s)",
               a$status, a$type_id, a$property_id %||% "(new type)",
               a$inferred_type %||% "", substr(a$evidence %||% "", 1, 60))
     })
@@ -333,7 +357,7 @@ pop_add_mcp_tool <- function(mcp_server, pop_sess) {
       if (length(type_entities) == 0) {
         return(list(success = TRUE, message = sprintf("No %s instances found.", tid)))
       }
-      rows <- sapply(head(type_entities, 20), function(e) {
+      rows <- sapply(utils::head(type_entities, 20), function(e) {
         name_val <- e$properties[["name"]] %||% e$properties[[1]] %||% e$instance_id
         sprintf("  [%.2f] %s", e$confidence, as.character(name_val))
       })

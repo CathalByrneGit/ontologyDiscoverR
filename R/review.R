@@ -19,7 +19,7 @@ dis_review <- function(session) {
   session_env$session <- session
 
   ui <- bslib::page_navbar(
-    title    = paste0("ontologyDiscoverR: Review — ", session$label),
+    title    = paste0("ontologyDiscoverR: Review \u2014 ", session$label),
     theme    = bslib::bs_theme(version = 5),
 
     bslib::nav_panel(
@@ -120,13 +120,13 @@ dis_review <- function(session) {
 
       if (!is.null(input[[paste0("approve_ot_", sel)]]) &&
           input[[paste0("approve_ot_", sel)]] > 0) {
-        isolate({
+        shiny::isolate({
           rv$candidates$object_types[[sel]]$status <- "approved"
         })
       }
       if (!is.null(input[[paste0("reject_ot_", sel)]]) &&
           input[[paste0("reject_ot_", sel)]] > 0) {
-        isolate({
+        shiny::isolate({
           rv$candidates$object_types[[sel]]$status <- "rejected"
         })
       }
@@ -189,11 +189,11 @@ dis_review <- function(session) {
       if (is.null(sel)) return()
       if (!is.null(input[[paste0("approve_lt_", sel)]]) &&
           input[[paste0("approve_lt_", sel)]] > 0) {
-        isolate({ rv$candidates$link_types[[sel]]$status <- "approved" })
+        shiny::isolate({ rv$candidates$link_types[[sel]]$status <- "approved" })
       }
       if (!is.null(input[[paste0("reject_lt_", sel)]]) &&
           input[[paste0("reject_lt_", sel)]] > 0) {
-        isolate({ rv$candidates$link_types[[sel]]$status <- "rejected" })
+        shiny::isolate({ rv$candidates$link_types[[sel]]$status <- "rejected" })
       }
     })
 
@@ -240,17 +240,17 @@ dis_review <- function(session) {
       if (is.null(sel)) return()
       if (!is.null(input[[paste0("save_sql_", sel)]]) &&
           input[[paste0("save_sql_", sel)]] > 0) {
-        isolate({
+        shiny::isolate({
           rv$candidates$concept_hints[[sel]]$sql_expr <- input[[paste0("edit_sql_", sel)]]
         })
       }
       if (!is.null(input[[paste0("approve_ch_", sel)]]) &&
           input[[paste0("approve_ch_", sel)]] > 0) {
-        isolate({ rv$candidates$concept_hints[[sel]]$status <- "approved" })
+        shiny::isolate({ rv$candidates$concept_hints[[sel]]$status <- "approved" })
       }
       if (!is.null(input[[paste0("reject_ch_", sel)]]) &&
           input[[paste0("reject_ch_", sel)]] > 0) {
-        isolate({ rv$candidates$concept_hints[[sel]]$status <- "rejected" })
+        shiny::isolate({ rv$candidates$concept_hints[[sel]]$status <- "rejected" })
       }
     })
 

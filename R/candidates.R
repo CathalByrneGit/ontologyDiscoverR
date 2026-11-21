@@ -5,13 +5,15 @@
 #' @param description Description of the object type
 #' @param source_refs List of source references
 #' @param confidence Confidence score 0.0-1.0
+#' @param extracted_by `"provider/model"` label of the LLM that proposed it
 #' @param primary_key List with property_id and type
 #' @param properties List of property definitions
 #' @return A CandidateObjectType S3 object
 #' @export
 new_candidate_object_type <- function(id, display_name, description = "",
                                        source_refs = list(), confidence = 0.5,
-                                       primary_key = NULL, properties = list()) {
+                                       primary_key = NULL, properties = list(),
+                                       extracted_by = NA_character_) {
   obj <- list(
     candidate_id  = new_uuid(),
     element_type  = "object_type",
@@ -20,6 +22,7 @@ new_candidate_object_type <- function(id, display_name, description = "",
     description   = description,
     source_refs   = source_refs,
     confidence    = confidence,
+    extracted_by  = extracted_by,
     primary_key   = primary_key,
     properties    = properties,
     status        = "pending",
@@ -39,14 +42,16 @@ new_candidate_object_type <- function(id, display_name, description = "",
 #' @param to_type_id Object type id this link points to
 #' @param cardinality One of: one_to_one, one_to_many, many_to_many
 #' @param directed Logical; whether link is directed
+#' @param description Description of the link type
 #' @param source_refs List of source references
 #' @param confidence Confidence score 0.0-1.0
+#' @param extracted_by `"provider/model"` label of the LLM that proposed it
 #' @return A CandidateLinkType S3 object
 #' @export
 new_candidate_link_type <- function(id, display_name, from_type_id, to_type_id,
                                      cardinality = "one_to_many", directed = TRUE,
                                      description = "", source_refs = list(),
-                                     confidence = 0.5) {
+                                     confidence = 0.5, extracted_by = NA_character_) {
   obj <- list(
     candidate_id  = new_uuid(),
     element_type  = "link_type",
@@ -59,6 +64,7 @@ new_candidate_link_type <- function(id, display_name, from_type_id, to_type_id,
     directed      = directed,
     source_refs   = source_refs,
     confidence    = confidence,
+    extracted_by  = extracted_by,
     status        = "pending",
     conflicts     = list(),
     merged_into   = NULL
@@ -76,11 +82,12 @@ new_candidate_link_type <- function(id, display_name, from_type_id, to_type_id,
 #' @param description Description of the action
 #' @param source_refs List of source references
 #' @param confidence Confidence score 0.0-1.0
+#' @param extracted_by `"provider/model"` label of the LLM that proposed it
 #' @return A CandidateActionType S3 object
 #' @export
 new_candidate_action_type <- function(id, display_name, object_type_id = NULL,
                                        description = "", source_refs = list(),
-                                       confidence = 0.5) {
+                                       confidence = 0.5, extracted_by = NA_character_) {
   obj <- list(
     candidate_id    = new_uuid(),
     element_type    = "action_type",
@@ -90,6 +97,7 @@ new_candidate_action_type <- function(id, display_name, object_type_id = NULL,
     object_type_id  = object_type_id,
     source_refs     = source_refs,
     confidence      = confidence,
+    extracted_by  = extracted_by,
     status          = "pending",
     conflicts       = list(),
     merged_into     = NULL
@@ -108,11 +116,13 @@ new_candidate_action_type <- function(id, display_name, object_type_id = NULL,
 #' @param description Description of the concept
 #' @param source_refs List of source references
 #' @param confidence Confidence score 0.0-1.0
+#' @param extracted_by `"provider/model"` label of the LLM that proposed it
 #' @return A CandidateConceptHint S3 object
 #' @export
 new_candidate_concept_hint <- function(id, display_name, object_type_id = NULL,
                                         sql_expr = "", description = "",
-                                        source_refs = list(), confidence = 0.5) {
+                                        source_refs = list(), confidence = 0.5,
+                                        extracted_by = NA_character_) {
   obj <- list(
     candidate_id    = new_uuid(),
     element_type    = "concept_hint",
@@ -123,6 +133,7 @@ new_candidate_concept_hint <- function(id, display_name, object_type_id = NULL,
     sql_expr        = sql_expr,
     source_refs     = source_refs,
     confidence      = confidence,
+    extracted_by  = extracted_by,
     status          = "pending",
     conflicts       = list(),
     merged_into     = NULL
@@ -133,6 +144,8 @@ new_candidate_concept_hint <- function(id, display_name, object_type_id = NULL,
 }
 
 #' Print method for Candidate objects
+#' @param x The object to print.
+#' @param ... Ignored.
 #' @export
 print.Candidate <- function(x, ...) {
   cat(sprintf("<Candidate[%s]> %s (conf=%.2f, status=%s)\n",
@@ -141,6 +154,9 @@ print.Candidate <- function(x, ...) {
 }
 
 # Helper: create a source_ref entry
-new_source_ref <- function(source_id, source_label, excerpt = "") {
-  list(source_id = source_id, source_label = source_label, excerpt = excerpt)
+new_source_ref <- function(source_id, source_label, excerpt = "",
+                           extracted_by = NULL) {
+  ref <- list(source_id = source_id, source_label = source_label, excerpt = excerpt)
+  if (!is.null(extracted_by) && !is.na(extracted_by)) ref$extracted_by <- extracted_by
+  ref
 }

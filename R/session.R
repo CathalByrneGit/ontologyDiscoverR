@@ -1,11 +1,12 @@
 #' Create a new discovery session
 #'
 #' @param label Optional human-readable label for the session
-#' @param llm A one-argument function `f(system_prompt)` returning an ellmer Chat object.
-#'   Controls which LLM provider is used. Defaults to Anthropic Claude.
-#'   Examples:
-#'   - `function(sp) ellmer::chat_openai(model = "gpt-4o", system_prompt = sp)`
-#'   - `function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp)`
+#' @param llm The LLM provider: an ellmer Chat object (e.g.
+#'   `ellmer::chat_openai(model = "<model>")`), a function `f(system_prompt)`
+#'   returning one, a `"provider/model"` string for `ellmer::chat()`, or `NULL`
+#'   to use `getOption("ontologyDiscoverR.chat")` or the
+#'   `ONTOLOGYDISCOVERR_CHAT` environment variable. There is no built-in
+#'   default provider; see [call_llm()].
 #' @return A DiscoverySession S3 object
 #' @export
 discover_session <- function(label = NULL, llm = NULL) {
@@ -21,6 +22,7 @@ discover_session <- function(label = NULL, llm = NULL) {
       concept_hints  = list()
     ),
     llm_fn        = llm,
+    llm_info      = .llm_info(llm),
     db_connection = NULL,
     extracted     = FALSE
   )
@@ -110,14 +112,24 @@ dis_add_file <- function(session, path, type = NULL) {
 #'
 #' @param session A DiscoverySession object
 #' @param verbose Show progress messages (default TRUE)
+#' @param chunk_tokens Approximate maximum tokens per LLM request. Large
+#'   sources are split into chunks of this size. Smaller values (e.g. 2000-4000)
+#'   help small local models. Defaults to `getOption("ontologyDiscoverR.chunk_tokens", 8000)`.
 #' @return Updated DiscoverySession with populated $candidates
 #' @export
-dis_extract <- function(session, verbose = TRUE) {
+dis_extract <- function(session, verbose = TRUE,
+                        chunk_tokens = getOption("ontologyDiscoverR.chunk_tokens", 8000L)) {
   stopifnot(inherits(session, "DiscoverySession"))
 
   if (length(session$sources) == 0) {
     rlang::abort("No sources added to session. Use dis_add_file() or dis_add_source() first.")
   }
+
+  # Fail before the per-source error handling below can swallow it.
+  .check_provider(session$llm_fn)
+  session$llm_info <- .llm_info(session$llm_fn)
+  llm          <- session$llm_fn
+  extracted_by <- session$llm_info$label
 
   all_object_types  <- list()
   all_link_types    <- list()
@@ -131,7 +143,7 @@ dis_extract <- function(session, verbose = TRUE) {
     if (verbose) cli::cli_alert_info("Processing source {i}/{n_sources}: {source$source_label}")
 
     # Chunk large sources
-    chunks <- chunk_source(source)
+    chunks <- chunk_source(source, max_tokens = chunk_tokens)
 
     for (chunk in chunks) {
       # Pass 1: Object types
@@ -140,7 +152,8 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_types <- tryCatch(
-        extract_object_types(chunk, existing_types = all_object_types, llm_fn = session$llm_fn),
+        extract_object_types(chunk, existing_types = all_object_types,
+                             llm = llm, extracted_by = extracted_by),
         error = function(e) {
           rlang::warn(paste0("Object type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -154,7 +167,7 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_links <- tryCatch(
-        extract_link_types(chunk, all_object_types, llm_fn = session$llm_fn),
+        extract_link_types(chunk, all_object_types, llm = llm, extracted_by = extracted_by),
         error = function(e) {
           rlang::warn(paste0("Link type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -168,7 +181,7 @@ dis_extract <- function(session, verbose = TRUE) {
       }
 
       new_actions <- tryCatch(
-        extract_action_types(chunk, all_object_types, llm_fn = session$llm_fn),
+        extract_action_types(chunk, all_object_types, llm = llm, extracted_by = extracted_by),
         error = function(e) {
           rlang::warn(paste0("Action type extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -177,7 +190,7 @@ dis_extract <- function(session, verbose = TRUE) {
       all_action_types <- c(all_action_types, new_actions)
 
       new_concepts <- tryCatch(
-        extract_concept_hints(chunk, all_object_types, llm_fn = session$llm_fn),
+        extract_concept_hints(chunk, all_object_types, llm = llm, extracted_by = extracted_by),
         error = function(e) {
           rlang::warn(paste0("Concept hint extraction failed for '", chunk$source_label, "': ", conditionMessage(e)))
           list()
@@ -241,99 +254,9 @@ dis_summary <- function(session) {
   invisible(session)
 }
 
-#' Export approved candidates as an ontology bundle
-#'
-#' @param session A DiscoverySession object
-#' @param bundle_id Character id for the bundle
-#' @param bundle_name Human-readable bundle name
-#' @param min_confidence Minimum confidence for auto-including pending candidates (default 0.5)
-#' @param include_concepts Whether to include concept hints as concept_defs (default FALSE)
-#' @return A list representing an ontology bundle
-#' @export
-dis_to_bundle <- function(session, bundle_id, bundle_name,
-                           min_confidence = 0.5, include_concepts = FALSE) {
-  stopifnot(inherits(session, "DiscoverySession"))
-
-  include_candidate <- function(cand) {
-    cand$status == "approved" ||
-      (cand$status == "pending" && cand$confidence >= min_confidence)
-  }
-
-  approved_ot <- Filter(include_candidate, session$candidates$object_types)
-  approved_lt <- Filter(include_candidate, session$candidates$link_types)
-  approved_at <- Filter(include_candidate, session$candidates$action_types)
-  approved_ch <- if (include_concepts) Filter(include_candidate, session$candidates$concept_hints) else list()
-
-  approved_ot_ids <- sapply(approved_ot, function(t) t$id)
-
-  object_types <- lapply(approved_ot, function(ot) {
-    props <- lapply(ot$properties %||% list(), function(p) {
-      list(
-        id          = p$id,
-        type        = p$type,
-        nullable    = isTRUE(p$nullable),
-        description = p$description %||% ""
-      )
-    })
-    list(
-      id           = ot$id,
-      display_name = ot$display_name,
-      description  = ot$description %||% "",
-      primary_key  = ot$primary_key,
-      properties   = props
-    )
-  })
-
-  link_types <- lapply(
-    Filter(function(lt) lt$from_type_id %in% approved_ot_ids && lt$to_type_id %in% approved_ot_ids, approved_lt),
-    function(lt) {
-      list(
-        id           = lt$id,
-        display_name = lt$display_name,
-        description  = lt$description %||% "",
-        from_type_id = lt$from_type_id,
-        to_type_id   = lt$to_type_id,
-        cardinality  = lt$cardinality,
-        directed     = lt$directed
-      )
-    }
-  )
-
-  action_types <- lapply(approved_at, function(at) {
-    list(
-      id             = at$id,
-      display_name   = at$display_name,
-      description    = at$description %||% "",
-      object_type_id = at$object_type_id
-    )
-  })
-
-  concept_defs <- lapply(approved_ch, function(ch) {
-    list(
-      id             = ch$id,
-      display_name   = ch$display_name,
-      description    = ch$description %||% "",
-      object_type_id = ch$object_type_id,
-      sql_expr       = ch$sql_expr %||% ""
-    )
-  })
-
-  bundle <- list(
-    bundle_id    = bundle_id,
-    bundle_name  = bundle_name,
-    version      = "0.1.0",
-    created_at   = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
-    object_types = object_types,
-    link_types   = link_types,
-    action_types = action_types,
-    concept_defs = concept_defs
-  )
-
-  class(bundle) <- c("ontology_bundle", "list")
-  bundle
-}
-
 #' Print method for DiscoverySession
+#' @param x The object to print.
+#' @param ... Ignored.
 #' @export
 print.DiscoverySession <- function(x, ...) {
   cat(sprintf(
@@ -346,5 +269,7 @@ print.DiscoverySession <- function(x, ...) {
     length(x$candidates$action_types),
     length(x$candidates$concept_hints)
   ))
+  label <- x$llm_info$label %||% NA_character_
+  cat("  LLM: ", if (is.na(label)) "(not configured)" else label, "\n", sep = "")
   invisible(x)
 }

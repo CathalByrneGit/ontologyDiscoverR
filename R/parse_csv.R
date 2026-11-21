@@ -33,7 +33,7 @@ parse_r_dataframe <- function(df, name) {
     vals <- df[[col_name]]
     raw_type <- .infer_r_type(vals)
     n_distinct <- length(unique(vals[!is.na(vals)]))
-    sample_vals <- head(unique(vals[!is.na(vals)]), 5)
+    sample_vals <- utils::head(unique(vals[!is.na(vals)]), 5)
 
     list(
       name          = col_name,

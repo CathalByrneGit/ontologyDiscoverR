@@ -7,7 +7,7 @@
 #' @param properties Named list of property values (names must match schema properties)
 #' @param source_refs List of source references (use new_source_ref())
 #' @param confidence Confidence score 0.0-1.0
-#' @param schema The ontology_bundle used for validation (optional; validates if provided)
+#' @param schema The ontologySpecR `ontology_bundle` used for validation (optional; validates if provided)
 #' @return An EntityInstance S3 object
 #' @export
 new_entity_instance <- function(type_id, properties = list(),
@@ -41,7 +41,7 @@ new_entity_instance <- function(type_id, properties = list(),
 #' @param evidence Character string: the exact excerpt from the source that supports this relationship
 #' @param source_refs List of source references
 #' @param confidence Confidence score 0.0-1.0
-#' @param schema The ontology_bundle used for validation (optional)
+#' @param schema The ontologySpecR `ontology_bundle` used for validation (optional)
 #' @return A RelationshipInstance S3 object
 #' @export
 new_relationship_instance <- function(link_type_id, from_instance_id, to_instance_id,
@@ -98,6 +98,8 @@ new_schema_amendment <- function(amendment_type = c("new_property", "new_type"),
 }
 
 #' Print method for Instance objects
+#' @param x The object to print.
+#' @param ... Ignored.
 #' @export
 print.Instance <- function(x, ...) {
   cat(sprintf("<Instance[%s]> type=%s conf=%.2f status=%s\n",
@@ -107,7 +109,8 @@ print.Instance <- function(x, ...) {
 
 # Validate an EntityInstance against a schema bundle
 .validate_entity_instance <- function(instance, schema) {
-  valid_type_ids <- sapply(schema$object_types %||% list(), function(t) t$id)
+  types          <- ontologySpecR::bundle_object_types(schema)
+  valid_type_ids <- names(types)
 
   if (!instance$type_id %in% valid_type_ids) {
     rlang::warn(sprintf(
@@ -122,8 +125,7 @@ print.Instance <- function(x, ...) {
   }
 
   # Check for unknown properties
-  schema_type <- schema$object_types[[which(valid_type_ids == instance$type_id)]]
-  valid_prop_ids <- sapply(schema_type$properties %||% list(), function(p) p$id)
+  valid_prop_ids <- ontologySpecR::object_property_ids(types[[instance$type_id]])
 
   unknown_props <- setdiff(names(instance$properties), valid_prop_ids)
   for (prop_id in unknown_props) {
@@ -144,7 +146,7 @@ print.Instance <- function(x, ...) {
 
 # Validate a RelationshipInstance against a schema bundle
 .validate_relationship_instance <- function(instance, schema) {
-  valid_link_ids <- sapply(schema$link_types %||% list(), function(lt) lt$id)
+  valid_link_ids <- names(ontologySpecR::bundle_link_types(schema))
 
   if (!instance$link_type_id %in% valid_link_ids) {
     rlang::warn(sprintf(

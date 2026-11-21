@@ -24,15 +24,77 @@ file in a few lines of R code.
 
 ```{r setup}
 library(ontologyDiscoverR)
-
-# Ensure your API key is set
-Sys.setenv(ANTHROPIC_API_KEY = "your-key-here")  # or use .Renviron
 ```
+
+## Choosing a model
+
+ontologyDiscoverR talks to language models through
+[ellmer](https://ellmer.tidyverse.org), so it works with any provider ellmer
+supports. Nothing is hard-coded: you choose the provider and model, and if you
+choose none, discovery stops with an error explaining how to set one.
+
+Pass a Chat object to `discover_session()` (each request gets a fresh clone,
+so separate calls never share conversation history):
+
+```{r providers}
+# Anthropic (reads ANTHROPIC_API_KEY)
+sess <- discover_session("demo", llm = ellmer::chat_anthropic())
+
+# OpenAI (reads OPENAI_API_KEY)
+sess <- discover_session("demo", llm = ellmer::chat_openai(model = "gpt-4.1"))
+
+# Google Gemini (reads GEMINI_API_KEY or GOOGLE_API_KEY)
+sess <- discover_session("demo", llm = ellmer::chat_google_gemini())
+
+# Ollama, running locally: nothing leaves your machine
+sess <- discover_session("demo", llm = ellmer::chat_ollama(model = "llama3.3"))
+```
+
+You can also pass a `"provider/model"` string, which goes to `ellmer::chat()`,
+or a function `function(system_prompt)` that returns a Chat:
+
+```{r strings}
+sess <- discover_session("demo", llm = "openai/gpt-4.1")
+sess <- discover_session("demo", llm = function(sp) {
+  ellmer::chat_azure_openai(model = "my-deployment", system_prompt = sp)
+})
+```
+
+To set a default for every session, use an option or an environment variable
+(for example in `.Rprofile` / `.Renviron`):
+
+```{r defaults}
+options(ontologyDiscoverR.chat = "anthropic")
+Sys.setenv(ONTOLOGYDISCOVERR_CHAT = "ollama/llama3.3")
+```
+
+The order is: the `llm` argument, then the option, then the environment
+variable. The provider and model used are stored in `sess$llm_info`, and every
+candidate records them as `extracted_by` (for example `"openai/gpt-4.1"`), so
+runs with different models can be compared.
+
+Extraction uses structured output (`$chat_structured()`) when the provider
+supports it. Otherwise the answer is parsed from text, with one retry that
+shows the model its parse error.
+
+**Small local models.** Models under roughly 30B parameters extract less
+reliably: they miss entities, invent properties and sometimes break the JSON
+format. Smaller chunks help, because each request then covers less text:
+
+```{r chunks}
+sess <- dis_extract(sess, chunk_tokens = 3000)
+# or for every call:
+options(ontologyDiscoverR.chunk_tokens = 3000)
+```
+
+The default is 8000 tokens per chunk. Values of 2000-4000 suit 7-14B models;
+review their candidates with a higher `min_confidence` before building the
+bundle.
 
 ## Step 1: Create a session and add your schema
 
 ```{r session}
-sess <- discover_session("hospital-demo")
+sess <- discover_session("hospital-demo", llm = ellmer::chat_openai(model = "gpt-4.1"))
 sess <- dis_add_file(sess, "path/to/hospital-schema.sql")
 ```
 
@@ -77,8 +139,9 @@ bundle <- dis_to_bundle(
   bundle_name = "Hospital Management Ontology"
 )
 
-# The bundle is a plain list — write it to JSON for use with ontologySpecR
-jsonlite::write_json(bundle, "hospital-bundle.json", auto_unbox = TRUE, pretty = TRUE)
+# The result is a canonical ontologySpecR bundle, already checked with
+# ontologySpecR::validate_bundle(). Write it to JSON:
+ontologySpecR::write_bundle(bundle, "hospital-bundle.json")
 ```
 
 ## Quick summary

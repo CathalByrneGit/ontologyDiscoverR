@@ -3,18 +3,24 @@
 #' A population session extracts specific entity instances from a document corpus,
 #' constrained by the types and properties defined in a schema bundle.
 #'
-#' @param schema An ontology_bundle (output of dis_to_bundle()) defining the entity types
-#' @param llm A one-argument function f(system_prompt) returning an ellmer Chat object.
-#'   Defaults to Anthropic Claude. Use Ollama for sensitive/private corpora:
-#'   `function(sp) ellmer::chat_ollama(model = "llama3.3:70b", system_prompt = sp)`
+#' @param schema An ontologySpecR `ontology_bundle` (e.g. the output of
+#'   [dis_to_bundle()]), or anything `ontologySpecR::as_bundle()` accepts
+#'   (a bundle JSON file path or a parsed list).
+#' @param llm The LLM provider; same forms as in [discover_session()]. A local
+#'   model (e.g. via `ellmer::chat_ollama()`) keeps sensitive corpora private.
 #' @param label Optional label for the session
 #' @return A PopulateSession S3 object
 #' @export
 populate_session <- function(schema, llm = NULL, label = NULL) {
-  if (!inherits(schema, "ontology_bundle")) {
-    rlang::abort("'schema' must be an ontology_bundle (output of dis_to_bundle())")
-  }
-  if (length(schema$object_types) == 0) {
+  schema <- tryCatch(
+    ontologySpecR::as_bundle(schema),
+    error = function(e) rlang::abort(
+      c("'schema' must be an ontologySpecR bundle (e.g. the output of dis_to_bundle()).",
+        x = conditionMessage(e)),
+      call = NULL
+    )
+  )
+  if (length(ontologySpecR::bundle_object_types(schema)) == 0) {
     rlang::abort("Schema has no object types. Run dis_extract() and dis_to_bundle() first.")
   }
 
@@ -24,6 +30,7 @@ populate_session <- function(schema, llm = NULL, label = NULL) {
     created_at  = Sys.time(),
     schema      = schema,
     llm_fn      = llm,
+    llm_info    = .llm_info(llm),
     sources     = list(),
     instances   = list(
       entities       = list(),
@@ -109,14 +116,21 @@ pop_add_corpus <- function(pop_sess, dir, recursive = TRUE, pattern = NULL) {
 #'
 #' @param pop_sess A PopulateSession object
 #' @param verbose Show progress messages (default TRUE)
+#' @param chunk_tokens Approximate maximum tokens per LLM request; see
+#'   [dis_extract()].
 #' @return Updated PopulateSession with populated $instances
 #' @export
-pop_extract <- function(pop_sess, verbose = TRUE) {
+pop_extract <- function(pop_sess, verbose = TRUE,
+                        chunk_tokens = getOption("ontologyDiscoverR.chunk_tokens", 8000L)) {
   stopifnot(inherits(pop_sess, "PopulateSession"))
 
   if (length(pop_sess$sources) == 0) {
     rlang::abort("No sources added. Use pop_add_file() or pop_add_corpus() first.")
   }
+
+  .check_provider(pop_sess$llm_fn)
+  pop_sess$llm_info <- .llm_info(pop_sess$llm_fn)
+  extracted_by      <- pop_sess$llm_info$label
 
   schema       <- pop_sess$schema
   all_entities <- list()
@@ -128,7 +142,7 @@ pop_extract <- function(pop_sess, verbose = TRUE) {
     source <- pop_sess$sources[[i]]
     if (verbose) cli::cli_alert_info("Extracting instances from source {i}/{n}: {source$source_label}")
 
-    chunks <- chunk_source(source)
+    chunks <- chunk_source(source, max_tokens = chunk_tokens)
 
     for (chunk in chunks) {
       extracted <- tryCatch(
@@ -144,9 +158,10 @@ pop_extract <- function(pop_sess, verbose = TRUE) {
       new_entities <- lapply(extracted$entities %||% list(), function(e) {
         inst <- new_entity_instance(
           type_id     = e$type_id %||% "Unknown",
-          properties  = e$properties %||% list(),
+          properties  = .property_pairs_to_list(e$properties),
           source_refs = list(new_source_ref(chunk$source_id, chunk$source_label,
-                                            e$excerpt %||% "")),
+                                            e$excerpt %||% "",
+                                            extracted_by = extracted_by)),
           confidence  = as.numeric(e$confidence %||% 0.8),
           schema      = schema
         )
@@ -174,7 +189,9 @@ pop_extract <- function(pop_sess, verbose = TRUE) {
           from_instance_id = from_id,
           to_instance_id   = to_id,
           evidence         = r$evidence %||% "",
-          source_refs      = list(new_source_ref(chunk$source_id, chunk$source_label, r$evidence %||% "")),
+          source_refs      = list(new_source_ref(chunk$source_id, chunk$source_label,
+                                                 r$evidence %||% "",
+                                                 extracted_by = extracted_by)),
           confidence       = as.numeric(r$confidence %||% 0.8),
           schema           = schema
         )
@@ -196,7 +213,7 @@ pop_extract <- function(pop_sess, verbose = TRUE) {
     n_amend <- length(all_amends)
     cli::cli_alert_success("Extracted {n_ent} entities and {n_rel} relationships")
     if (n_amend > 0) {
-      cli::cli_alert_warning("{n_amend} schema amendment(s) flagged — review with pop_amendments()")
+      cli::cli_alert_warning("{n_amend} schema amendment(s) flagged \u2014 review with pop_amendments()")
     }
   }
 
@@ -399,13 +416,15 @@ pop_load <- function(path) {
 }
 
 #' Print method for PopulateSession
+#' @param x The object to print.
+#' @param ... Ignored.
 #' @export
 print.PopulateSession <- function(x, ...) {
   cat(sprintf(
     "<PopulateSession> '%s'\n  Schema: %d types, %d link types\n  Sources: %d | Populated: %s\n  Entities: %d | Relationships: %d | Amendments: %d\n",
     x$label,
-    length(x$schema$object_types),
-    length(x$schema$link_types),
+    length(x$schema$objects),
+    length(x$schema$links),
     length(x$sources),
     if (x$populated) "yes" else "no",
     length(x$instances$entities),
@@ -418,7 +437,7 @@ print.PopulateSession <- function(x, ...) {
 # Internal: call the LLM to extract instances from a single source chunk
 .extract_instances <- function(source, schema, llm_fn = NULL) {
   type_schema <- paste(
-    sapply(schema$object_types, function(ot) {
+    sapply(ontologySpecR::bundle_object_types(schema), function(ot) {
       props <- paste(sapply(ot$properties %||% list(), function(p) {
         sprintf("    %s: %s%s", p$id, p$type, if (isTRUE(p$nullable)) "" else " (required)")
       }), collapse = "\n")
@@ -428,15 +447,16 @@ print.PopulateSession <- function(x, ...) {
   )
 
   link_schema <- paste(
-    sapply(schema$link_types %||% list(), function(lt) {
-      sprintf("  %s: %s -> %s (%s)", lt$id, lt$from_type_id, lt$to_type_id, lt$cardinality)
+    sapply(ontologySpecR::bundle_link_types(schema), function(lt) {
+      ends <- ontologySpecR::link_endpoints(lt)
+      sprintf("  %s: %s -> %s (%s)", lt$id, ends$from, ends$to, lt$cardinality)
     }),
     collapse = "\n"
   )
 
   system_prompt <- paste0(
     "You are extracting specific named INSTANCES (individual records) from a document.\n\n",
-    "Extract every occurrence of the following entity types. Be thorough — extract ALL instances mentioned.\n\n",
+    "Extract every occurrence of the following entity types. Be thorough \u2014 extract ALL instances mentioned.\n\n",
     "ENTITY TYPES AND THEIR PROPERTIES:\n", type_schema, "\n\n",
     "RELATIONSHIP TYPES:\n", link_schema, "\n\n",
     "For each entity instance:\n",
@@ -450,7 +470,7 @@ print.PopulateSession <- function(x, ...) {
     "- Reference entities by their temp_id (from_temp_id, to_temp_id).\n",
     "- Include the exact text excerpt as evidence.\n",
     "- Give a confidence score.\n\n",
-    "If you see a property that is NOT in the schema but appears consistently, include it anyway — it will be flagged for schema review.\n\n",
+    "If you see a property that is NOT in the schema but appears consistently, include it anyway \u2014 it will be flagged for schema review.\n\n",
     "Respond ONLY with valid JSON. No preamble, no markdown fences.\n",
     "Schema: {",
     "\"entities\": [{\"temp_id\": \"string\", \"type_id\": \"string\", ",
@@ -464,5 +484,6 @@ print.PopulateSession <- function(x, ...) {
     source$raw_text
   )
 
-  call_llm(llm_fn, system_prompt, user_prompt, response_format = "json")
+  call_llm(llm_fn, system_prompt, user_prompt, response_format = "json",
+           type = .llm_type("population"))
 }
